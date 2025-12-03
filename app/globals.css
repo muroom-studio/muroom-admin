@@ -1,3 +1,14 @@
 @import 'tailwindcss';
 
 @import '../styles/typography/index.css';
+
+@layer base {
+    button {
+        background-color: transparent;
+        border: none;
+        cursor: pointer;
+    }
+    button:disabled {
+        cursor: not-allowed;
+    }
+}

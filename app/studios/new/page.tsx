@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Script from 'next/script';
+import { useRouter } from 'next/navigation';
 
 // --- Type Definitions ---
 
@@ -82,7 +83,8 @@ interface PresignedUrlResponse {
 
 // --- Main Component ---
 
-export default function AddStudios() {
+export default function NewStudioPage() {
+    const router = useRouter();
     const [stations, setStations] = useState<Station[]>([]);
 
     const [rooms, setRooms] = useState<RoomInfo[]>([
@@ -165,30 +167,6 @@ export default function AddStudios() {
                 [category]: (prev[category] as File[]).filter((_, i) => i !== indexToRemove),
             };
         });
-    };
-
-    // --- Handlers: Station ---
-    const addStation = () => {
-        if (stations.length >= 3) {
-            alert('지하철역은 최대 3개까지 추가할 수 있습니다.');
-            return;
-        }
-        setStations([...stations, { subwayStationId: '', sequence: '' }]);
-    };
-
-    const removeStation = (index: number) => {
-        const newStations = stations.filter((_, i) => i !== index);
-        setStations(newStations);
-    };
-
-    // [추가됨] Station 입력 변경 핸들러
-    const handleStationChange = (index: number, field: keyof Station, value: string) => {
-        const updatedStations = [...stations];
-        updatedStations[index] = {
-            ...updatedStations[index],
-            [field]: value,
-        };
-        setStations(updatedStations);
     };
 
     // --- Handlers: Room (룸 정보도 동일하게 업데이트 필요) ---
@@ -454,7 +432,7 @@ export default function AddStudios() {
     };
 
     return (
-        <div className='flex min-h-screen items-center justify-center p-8'>
+        <div className='flex flex-col min-h-screen items-center justify-center p-8'>
             <Script src='//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js' strategy='lazyOnload' />
 
             <main className='w-full max-w-4xl'>
@@ -1197,6 +1175,13 @@ export default function AddStudios() {
                     </button>
                 </form>
             </main>
+            <button
+                type='button'
+                onClick={() => router.push('/')}
+                className='mt-4 text-gray-700 p-3 rounded-md font-bold border border-gray-300 hover:bg-gray-100 transition-colors'
+            >
+                홈으로 돌아가기
+            </button>
         </div>
     );
 }

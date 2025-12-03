@@ -64,7 +64,7 @@ interface RoomInfo {
     roomBasePrice: string;
 }
 
-type StudioImageCategory = 'MAIN' | 'BUILDING' | 'ROOM' | 'BLUEPRINT';
+type StudioImageCategory = 'MAIN' | 'BUILDING' | 'ROOM' | 'BLUEPRINT' | 'COMMON_OPTION' | 'INDIVIDUAL_OPTION';
 
 interface StudioImageInfo {
     fileName: string;
@@ -105,6 +105,8 @@ export default function NewStudioPage() {
         buildingImages: [] as File[],
         roomImages: [] as File[],
         blueprintImage: null as File | null,
+        commonOptionImages: [] as File[],
+        individualOptionImages: [] as File[],
     });
 
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -309,6 +311,10 @@ export default function NewStudioPage() {
             if (selectedFiles.blueprintImage) {
                 allFiles.push({ file: selectedFiles.blueprintImage, category: 'BLUEPRINT' });
             }
+            selectedFiles.commonOptionImages.forEach((f) => allFiles.push({ file: f, category: 'COMMON_OPTION' }));
+            selectedFiles.individualOptionImages.forEach((f) =>
+                allFiles.push({ file: f, category: 'INDIVIDUAL_OPTION' })
+            );
 
             // 2. Presigned URL 일괄 요청
             const presignReqBody: StudioImagePresignedUrlRequest = {
@@ -359,6 +365,8 @@ export default function NewStudioPage() {
                 buildingImageKeys: [] as string[],
                 roomImageKeys: [] as string[],
                 blueprintImageKey: '',
+                commonOptionImageKeys: [] as string[],
+                individualOptionImageKeys: [] as string[],
             };
 
             presignedDataList.forEach((data, index) => {
@@ -369,6 +377,8 @@ export default function NewStudioPage() {
                 else if (category === 'BUILDING') finalImageKeys.buildingImageKeys.push(key);
                 else if (category === 'ROOM') finalImageKeys.roomImageKeys.push(key);
                 else if (category === 'BLUEPRINT') finalImageKeys.blueprintImageKey = key;
+                else if (category === 'COMMON_OPTION') finalImageKeys.commonOptionImageKeys.push(key);
+                else if (category === 'INDIVIDUAL_OPTION') finalImageKeys.individualOptionImageKeys.push(key);
             });
 
             // 5. 최종 데이터 구성
@@ -1160,6 +1170,64 @@ export default function NewStudioPage() {
                                         </button>
                                     </div>
                                 )}
+                            </div>
+
+                            {/* [추가] 공용 옵션 이미지 (선택, 최대 10개) */}
+                            <div>
+                                <label className='block mb-1 font-medium'>공용 옵션 이미지 (선택, 최대 10개)</label>
+                                <input
+                                    type='file'
+                                    multiple
+                                    accept='image/*'
+                                    className='w-full border p-2 rounded-md'
+                                    onChange={(e) => handleFileSelect(e, 'commonOptionImages')}
+                                />
+                                <div className='mt-2 space-y-1'>
+                                    {selectedFiles.commonOptionImages.map((file, idx) => (
+                                        <div
+                                            key={idx}
+                                            className='flex items-center justify-between bg-gray-50 p-2 rounded'
+                                        >
+                                            <span className='text-sm truncate'>{file.name}</span>
+                                            <button
+                                                type='button'
+                                                onClick={() => removeSelectedFile('commonOptionImages', idx)}
+                                                className='text-red-500 text-xs font-bold px-2'
+                                            >
+                                                X
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* [추가] 개별 옵션 이미지 (선택, 최대 10개) */}
+                            <div>
+                                <label className='block mb-1 font-medium'>개별 옵션 이미지 (선택, 최대 10개)</label>
+                                <input
+                                    type='file'
+                                    multiple
+                                    accept='image/*'
+                                    className='w-full border p-2 rounded-md'
+                                    onChange={(e) => handleFileSelect(e, 'individualOptionImages')}
+                                />
+                                <div className='mt-2 space-y-1'>
+                                    {selectedFiles.individualOptionImages.map((file, idx) => (
+                                        <div
+                                            key={idx}
+                                            className='flex items-center justify-between bg-gray-50 p-2 rounded'
+                                        >
+                                            <span className='text-sm truncate'>{file.name}</span>
+                                            <button
+                                                type='button'
+                                                onClick={() => removeSelectedFile('individualOptionImages', idx)}
+                                                className='text-red-500 text-xs font-bold px-2'
+                                            >
+                                                X
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     </fieldset>

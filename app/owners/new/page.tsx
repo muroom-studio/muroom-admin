@@ -71,7 +71,7 @@ export default function NewOwnerPage() {
             setPhoneNumber('');
         } catch (error) {
             console.error(error);
-            alert('소유주 등록 중 오류가 발생했습니다.');
+            alert('소유주 등록 중 오류가 발생했습니다.' + (error instanceof Error ? `\n${error.message}` : ''));
         } finally {
             setIsLoading(false);
         }

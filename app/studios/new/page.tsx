@@ -19,7 +19,7 @@ interface OptionsFromApi {
     parkingFeeOptions: OptionItem[];
     studioCommonOptions: OptionItem[];
     studioIndividualOptions: OptionItem[];
-    unavailableInstrumentOptions: OptionItem[];
+    forbiddenInstrumentOptions: OptionItem[];
 }
 
 interface DaumPostcodeData {
@@ -34,11 +34,11 @@ interface DaumPostcodeData {
 interface Station {
     subwayStationId: string;
     sequence: string;
-    // UI 표시용 (서버 전송 시엔 무시되거나 포함되어도 무관함)
     stationName?: string;
     distanceMeters?: number;
     lines?: { lineName: string; lineColor: string }[];
 }
+
 interface StudioSubwayLineInfo {
     lineName: string;
     lineColor: string;
@@ -50,14 +50,14 @@ interface StationInfo {
     lines: StudioSubwayLineInfo[];
     distanceMeters: number;
 }
+
 interface NearbyStationsResponse {
     stations: StationInfo[];
 }
 
-// Room 타입 명시
 interface RoomInfo {
     roomName: string;
-    isAvailable: boolean;
+    isAvailable: boolean; // 기본값 처리를 위해 유지
     availableAt: string;
     widthMm: string;
     heightMm: string;
@@ -93,12 +93,48 @@ export default function NewStudioPage() {
 
     const [address, setAddress] = useState({
         zipCode: '',
-        roadAddress: '',
-        jibunAddress: '',
+        roadNameAddress: '',
+        lotNumberAddress: '',
         detailedAddress: '',
     });
 
     const [parkingAddress, setParkingAddress] = useState('');
+
+    // [수정] 토글 가능한 옵션들의 상태 통합 관리 (화장실, 숙소, 화재보험)
+    const [toggleOptions, setToggleOptions] = useState<{
+        hasRestroom: string | null;
+        restroomLocation: string | null;
+        restroomGender: string | null;
+        isLodgingAvailable: string | null; // 'true' | 'false' | null
+        hasFireInsurance: string | null; // 'true' | 'false' | null
+    }>({
+        hasRestroom: null,
+        restroomLocation: null,
+        restroomGender: null,
+        isLodgingAvailable: null,
+        hasFireInsurance: null,
+    });
+
+    const handleToggleOption = (key: keyof typeof toggleOptions, value: string) => {
+        setToggleOptions((prev) => {
+            const nextValue = prev[key] === value ? null : value; // 토글 로직
+
+            // [로직 추가] 화장실 유무가 '있음(true)'이 아닌 상태로 변하면 -> 하위 상세 정보 초기화
+            if (key === 'hasRestroom' && nextValue !== 'true') {
+                return {
+                    ...prev,
+                    [key]: nextValue,
+                    restroomLocation: null,
+                    restroomGender: null,
+                };
+            }
+
+            return {
+                ...prev,
+                [key]: nextValue,
+            };
+        });
+    };
 
     const [selectedFiles, setSelectedFiles] = useState({
         mainImages: [] as File[],
@@ -117,8 +153,9 @@ export default function NewStudioPage() {
         parkingFeeOptions: [],
         studioCommonOptions: [],
         studioIndividualOptions: [],
-        unavailableInstrumentOptions: [],
+        forbiddenInstrumentOptions: [],
     });
+
     const [nearbyCandidates, setNearbyCandidates] = useState<StationInfo[]>([]);
 
     // --- Data Fetching ---
@@ -130,16 +167,19 @@ export default function NewStudioPage() {
 
                 if (response.ok && responseBody.data) {
                     setOptionData(responseBody.data);
-                } else {
-                    console.error('옵션 데이터를 불러오는 데 실패했습니다:', responseBody.message);
                 }
             } catch (error) {
-                console.error('옵션 데이터를 불러오는 중 오류 발생:', error);
+                console.error('옵션 로드 실패:', error);
             }
         };
-
         fetchOptions();
     }, []);
+
+    // API 옵션 분류
+    const restroomLocationOptions = optionData.restroomOptions.filter((opt) =>
+        ['INTERNAL', 'EXTERNAL'].includes(opt.code)
+    );
+    const restroomGenderOptions = optionData.restroomOptions.filter((opt) => ['SEPARATE', 'UNISEX'].includes(opt.code));
 
     // --- Handlers: File ---
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, category: keyof typeof selectedFiles) => {
@@ -151,10 +191,7 @@ export default function NewStudioPage() {
             if (category === 'blueprintImage') {
                 return { ...prev, [category]: fileList[0] };
             }
-            return {
-                ...prev,
-                [category]: [...(prev[category] as File[]), ...fileList],
-            };
+            return { ...prev, [category]: [...(prev[category] as File[]), ...fileList] };
         });
         e.target.value = '';
     };
@@ -171,7 +208,7 @@ export default function NewStudioPage() {
         });
     };
 
-    // --- Handlers: Room (룸 정보도 동일하게 업데이트 필요) ---
+    // --- Handlers: Room ---
     const addRoom = () => {
         setRooms([
             ...rooms,
@@ -180,40 +217,29 @@ export default function NewStudioPage() {
     };
 
     const removeRoom = (index: number) => {
+        if (rooms.length <= 1) return alert('최소 1개의 룸이 필요합니다.');
         const newRooms = rooms.filter((_, i) => i !== index);
         setRooms(newRooms);
     };
 
-    // [추가됨] Room 입력 변경 핸들러
     const handleRoomChange = (index: number, field: keyof RoomInfo, value: string | boolean) => {
         const updatedRooms = [...rooms];
-        // 타입 안전성을 위해 값 할당 시 타입 단언 필요할 수 있음
-        updatedRooms[index] = {
-            ...updatedRooms[index],
-            [field]: value,
-        };
+        updatedRooms[index] = { ...updatedRooms[index], [field]: value };
         setRooms(updatedRooms);
     };
 
-    // [수정] 인근 지하철역 가져오기 (전체 리스트 저장)
+    // --- Handlers: Subway ---
     const fetchNearbyStations = async (queryAddress: string) => {
         try {
             const encodedAddr = encodeURIComponent(queryAddress);
             const res = await fetch(`/api/v1/subway/nearby?address=${encodedAddr}`);
-
-            if (!res.ok) {
-                console.warn('인근 지하철역을 불러오지 못했습니다.');
-                return;
-            }
+            if (!res.ok) return;
 
             const responseBody = await res.json();
-            // 서버 응답 구조: { data: { stations: [...] } } 확인 필요 (앞선 코드 로직 따름)
             const data = (responseBody.data || responseBody) as NearbyStationsResponse;
 
             if (data.stations && data.stations.length > 0) {
-                // [변경] 전체 목록을 후보군 State에 저장 (선택은 사용자가 함)
                 setNearbyCandidates(data.stations);
-                // 주소가 바뀌었으므로 기존 선택된 역들은 초기화 (선택 사항, 여기선 안전하게 초기화)
                 setStations([]);
             } else {
                 setNearbyCandidates([]);
@@ -224,37 +250,31 @@ export default function NewStudioPage() {
         }
     };
 
-    // [추가] 지하철역 선택/해제 토글 핸들러
     const handleToggleStation = (info: StationInfo) => {
         const stationIdStr = String(info.stationId);
         const isAlreadySelected = stations.some((s) => s.subwayStationId === stationIdStr);
 
         if (isAlreadySelected) {
-            // [해제] 리스트에서 제거하고 순서(sequence) 재정렬
             setStations((prev) =>
                 prev
                     .filter((s) => s.subwayStationId !== stationIdStr)
                     .map((s, index) => ({ ...s, sequence: String(index + 1) }))
             );
         } else {
-            // [선택] 리스트에 추가 (최대 3개 제한)
-            if (stations.length >= 3) {
-                alert('지하철역은 최대 3개까지만 선택할 수 있습니다.');
-                return;
-            }
-
+            if (stations.length >= 3) return alert('지하철역은 최대 3개까지만 선택할 수 있습니다.');
             setStations((prev) => [
                 ...prev,
                 {
                     subwayStationId: stationIdStr,
-                    sequence: String(prev.length + 1), // 현재 개수 + 1이 순위가 됨
-                    stationName: info.stationName, // UI 표시용
-                    distanceMeters: info.distanceMeters, // UI 표시용
-                    lines: info.lines, // UI 표시용
+                    sequence: String(prev.length + 1),
+                    stationName: info.stationName,
+                    distanceMeters: info.distanceMeters,
+                    lines: info.lines,
                 },
             ]);
         }
     };
+
     // --- Handlers: Address ---
     const onClickAddressSearch = () => {
         // @ts-expect-error: window.daum is loaded via script tag
@@ -262,12 +282,13 @@ export default function NewStudioPage() {
             oncomplete: function (data: DaumPostcodeData) {
                 setAddress((prev) => ({
                     ...prev,
-                    zipCode: data.zonecode,
-                    roadAddress: data.roadAddress,
-                    jibunAddress: data.jibunAddress,
+                    zipCode: data.zonecode || '', // 혹시 모를 안전장치
+                    // [수정] 값이 없으면 빈 문자열로 설정하여 에러 방지
+                    roadNameAddress: data.roadAddress || '',
+                    lotNumberAddress: data.jibunAddress || '',
                 }));
 
-                const targetAddress = data.roadAddress || data.jibunAddress;
+                const targetAddress = data.roadAddress || data.jibunAddress || '';
                 if (targetAddress) {
                     fetchNearbyStations(targetAddress);
                 }
@@ -281,7 +302,8 @@ export default function NewStudioPage() {
         // @ts-expect-error: window.daum is loaded via script tag
         new window.daum.Postcode({
             oncomplete: function (data: DaumPostcodeData) {
-                const fullAddress = data.roadAddress || data.jibunAddress;
+                // [수정] 값이 없으면 빈 문자열 할당
+                const fullAddress = data.roadAddress || data.jibunAddress || '';
                 setParkingAddress(fullAddress);
             },
         }).open();
@@ -295,15 +317,32 @@ export default function NewStudioPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
+        // 1. 필수값 유효성 검사
         if (selectedFiles.mainImages.length === 0) return alert('메인 이미지는 최소 1개 이상 필요합니다.');
         if (!selectedFiles.blueprintImage) return alert('도면 이미지는 필수입니다.');
+
+        // [추가] 지하철역 최소 1개 필수
+        if (stations.length === 0) return alert('인근 지하철역을 최소 1개 이상 선택해야 합니다.');
+
+        // [추가] 룸 이름 필수 체크 (나머지 값은 선택)
+        for (let i = 0; i < rooms.length; i++) {
+            if (!rooms[i].roomName.trim()) {
+                return alert(`${i + 1}번 룸의 이름을 입력해주세요.`);
+            }
+        }
+
+        if (toggleOptions.hasRestroom === 'true') {
+            if (!toggleOptions.restroomLocation && !toggleOptions.restroomGender) {
+                return alert('화장실이 있다고 선택하셨습니다.\n화장실 위치나 남녀 구분 중 최소 하나는 선택해주세요.');
+            }
+        }
 
         if (!confirm('스튜디오를 생성하시겠습니까?')) return;
 
         setIsSubmitting(true);
 
         try {
-            // 1. 파일 평탄화
+            // 2. 파일 평탄화
             const allFiles: { file: File; category: StudioImageCategory }[] = [];
             selectedFiles.mainImages.forEach((f) => allFiles.push({ file: f, category: 'MAIN' }));
             selectedFiles.buildingImages.forEach((f) => allFiles.push({ file: f, category: 'BUILDING' }));
@@ -316,7 +355,7 @@ export default function NewStudioPage() {
                 allFiles.push({ file: f, category: 'INDIVIDUAL_OPTION' })
             );
 
-            // 2. Presigned URL 일괄 요청
+            // 3. Presigned URL 요청
             const presignReqBody: StudioImagePresignedUrlRequest = {
                 studioImages: allFiles.map((item) => ({
                     fileName: item.file.name,
@@ -333,23 +372,16 @@ export default function NewStudioPage() {
 
             if (!presignRes.ok) {
                 const errorMsg = await presignRes.text();
-                console.error('URL 발급 에러:', errorMsg);
-                throw new Error(`이미지 업로드 URL 발급 실패 (${presignRes.status})`);
+                throw new Error(`이미지 업로드 URL 발급 실패: ${errorMsg}`);
             }
 
             const response = await presignRes.json();
             const presignedDataList = response.data?.presignedUrls as PresignedUrlResponse[];
 
-            if (!presignedDataList || presignedDataList.length !== allFiles.length) {
-                throw new Error('요청한 파일 개수와 발급된 URL 개수가 일치하지 않습니다.');
-            }
-
-            // 3. S3 병렬 업로드
+            // 4. S3 업로드
             const uploadPromises = allFiles.map((item, index) => {
                 const data = presignedDataList[index];
-                if (!data || !data.url) {
-                    throw new Error(`${index}번째 파일에 대한 URL 정보(url)가 없습니다.`);
-                }
+                if (!data || !data.url) throw new Error(`${index}번 파일 URL 없음`);
                 return fetch(data.url, {
                     method: 'PUT',
                     body: item.file,
@@ -359,7 +391,7 @@ export default function NewStudioPage() {
 
             await Promise.all(uploadPromises);
 
-            // 4. 업로드된 키 분류
+            // 5. 키 분류
             const finalImageKeys = {
                 mainImageKeys: [] as string[],
                 buildingImageKeys: [] as string[],
@@ -372,7 +404,6 @@ export default function NewStudioPage() {
             presignedDataList.forEach((data, index) => {
                 const category = allFiles[index].category;
                 const key = data.fileKey;
-
                 if (category === 'MAIN') finalImageKeys.mainImageKeys.push(key);
                 else if (category === 'BUILDING') finalImageKeys.buildingImageKeys.push(key);
                 else if (category === 'ROOM') finalImageKeys.roomImageKeys.push(key);
@@ -381,15 +412,18 @@ export default function NewStudioPage() {
                 else if (category === 'INDIVIDUAL_OPTION') finalImageKeys.individualOptionImageKeys.push(key);
             });
 
-            // 5. 최종 데이터 구성
+            // 6. 데이터 구성
             const formData = new FormData(e.target as HTMLFormElement);
 
+            const commonOptionCodes = formData.getAll('studioCommonOptionCodes').map(String);
+            const individualOptionCodes = formData.getAll('studioIndividualOptionCodes').map(String);
+            const optionCodes = [...commonOptionCodes, ...individualOptionCodes];
             const studioCreatePayload = {
                 studioName: formData.get('studioName'),
-                studioMinPrice: Number(formData.get('studioMinPrice')),
-                studioMaxPrice: Number(formData.get('studioMaxPrice')),
-                depositAmount: Number(formData.get('depositAmount')),
-                introduction: formData.get('introduction'),
+                studioMinPrice: Number(formData.get('studioMinPrice')) || null,
+                studioMaxPrice: Number(formData.get('studioMaxPrice')) || null,
+                depositAmount: Number(formData.get('depositAmount')) || null,
+                introduction: formData.get('introduction') || null,
                 ownerPhoneNumber: formData.get('ownerPhoneNumber'),
 
                 addressInfo: address,
@@ -397,30 +431,46 @@ export default function NewStudioPage() {
                 buildingInfo: {
                     floorType: formData.get('buildingInfo.floorType'),
                     floorNumber: Number(formData.get('buildingInfo.floorNumber')),
-                    restroomType: formData.get('buildingInfo.restroomType'),
-                    isParkingAvailable: formData.get('buildingInfo.isParkingAvailable') === 'true',
-                    isLodgingAvailable: formData.get('buildingInfo.isLodgingAvailable') === 'true',
-                    hasFireInsurance: formData.get('buildingInfo.hasFireInsurance') === 'true',
-                    parkingFeeType: formData.get('buildingInfo.parkingFeeType'),
-                    parkingFeeInfo: formData.get('buildingInfo.parkingFeeInfo'),
-                    parkingSpots: Number(formData.get('buildingInfo.parkingSpots')),
-                    parkingLocationName: formData.get('buildingInfo.parkingLocationName'),
-                    parkingLocationAddress: parkingAddress,
+
+                    // 토글 옵션은 State에서 직접 가져오기 (폼 데이터보다 확실함)
+                    hasRestroom: toggleOptions.hasRestroom ? toggleOptions.hasRestroom === 'true' : null,
+                    restroomLocation: toggleOptions.restroomLocation || null,
+                    restroomGender: toggleOptions.restroomGender || null,
+
+                    isLodgingAvailable: toggleOptions.isLodgingAvailable
+                        ? toggleOptions.isLodgingAvailable === 'true'
+                        : null,
+                    hasFireInsurance: toggleOptions.hasFireInsurance ? toggleOptions.hasFireInsurance === 'true' : null,
+
+                    // [수정] 주차 관련 필드는 선택 사항이므로 값 없으면 null/빈문자열 전송
+                    parkingFeeType: formData.get('buildingInfo.parkingFeeType') || null,
+                    parkingFeeInfo: formData.get('buildingInfo.parkingFeeInfo') || null,
+                    parkingSpots: formData.get('buildingInfo.parkingSpots')
+                        ? Number(formData.get('buildingInfo.parkingSpots'))
+                        : null,
+                    parkingLocationName: formData.get('buildingInfo.parkingLocationName') || null,
+                    parkingLocationAddress: parkingAddress || null,
                 },
 
-                // [중요] State에서 관리되는 stations 사용 (이제 값이 제대로 들어있음)
                 nearbyStations: stations,
 
-                optionCodes: formData.getAll('optionCodes'),
+                // 옵션은 선택 안 하면 빈 배열로 전송됨
+                optionCodes: optionCodes,
                 forbiddenInstrumentCodes: formData.getAll('forbiddenInstrumentCodes'),
 
-                // [중요] State에서 관리되는 rooms 사용 (이제 값이 제대로 들어있음)
-                rooms: rooms,
+                // [수정] 룸 정보: 빈 숫자 필드는 null 처리
+                rooms: rooms.map((room) => ({
+                    ...room,
+                    widthMm: room.widthMm ? Number(room.widthMm) : null,
+                    heightMm: room.heightMm ? Number(room.heightMm) : null,
+                    roomBasePrice: room.roomBasePrice ? Number(room.roomBasePrice) : null,
+                    // 날짜 등은 빈 문자열 그대로 전송 (백엔드 처리 필요 시 수정)
+                })),
 
                 imageKeys: finalImageKeys,
             };
 
-            // 6. 스튜디오 생성 요청
+            // 7. 생성 요청
             const createRes = await fetch(`/api/admin/studios`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -429,10 +479,11 @@ export default function NewStudioPage() {
 
             if (!createRes.ok) {
                 const errorText = await createRes.text();
-                throw new Error(`스튜디오 생성 실패: ${errorText}`);
+                throw new Error(errorText);
             }
 
             alert('스튜디오가 성공적으로 생성되었습니다.');
+            router.push('/');
         } catch (error) {
             console.error(error);
             alert(error instanceof Error ? error.message : '처리 중 오류가 발생했습니다.');
@@ -448,13 +499,13 @@ export default function NewStudioPage() {
             <main className='w-full max-w-4xl'>
                 <h1 className='text-2xl font-bold mb-10 text-center'>스튜디오 등록</h1>
                 <form onSubmit={handleSubmit} id='studio-create-form' className='space-y-6'>
-                    {/* ... (기본 정보 Fieldset은 기존과 동일하므로 생략) ... */}
+                    {/* 기본 정보 */}
                     <fieldset className='border p-4 rounded-md'>
                         <legend className='font-bold text-lg px-2'>기본 정보</legend>
                         <div className='space-y-4 p-2'>
                             <div>
                                 <label htmlFor='studioName' className='block mb-1 font-medium'>
-                                    스튜디오 이름
+                                    스튜디오 이름 <span className='text-red-500'>*</span>
                                 </label>
                                 <input
                                     type='text'
@@ -465,58 +516,46 @@ export default function NewStudioPage() {
                                 />
                             </div>
                             <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
+                                {/* 가격, 보증금 등 필수 해제 */}
                                 <div>
-                                    <label htmlFor='studioMinPrice' className='block mb-1 font-medium'>
-                                        스튜디오 최소 가격
-                                    </label>
+                                    <label className='block mb-1 font-medium'>최소 가격</label>
                                     <input
                                         type='number'
-                                        id='studioMinPrice'
                                         name='studioMinPrice'
                                         className='w-full border p-2 rounded-md'
                                     />
                                 </div>
                                 <div>
-                                    <label htmlFor='studioMaxPrice' className='block mb-1 font-medium'>
-                                        스튜디오 최대 가격
-                                    </label>
+                                    <label className='block mb-1 font-medium'>최대 가격</label>
                                     <input
                                         type='number'
-                                        id='studioMaxPrice'
                                         name='studioMaxPrice'
                                         className='w-full border p-2 rounded-md'
                                     />
                                 </div>
                                 <div>
-                                    <label htmlFor='depositAmount' className='block mb-1 font-medium'>
-                                        보증금
-                                    </label>
+                                    <label className='block mb-1 font-medium'>보증금</label>
                                     <input
                                         type='number'
-                                        id='depositAmount'
                                         name='depositAmount'
                                         className='w-full border p-2 rounded-md'
                                     />
                                 </div>
                             </div>
                             <div>
-                                <label htmlFor='introduction' className='block mb-1 font-medium'>
-                                    소개글
-                                </label>
+                                <label className='block mb-1 font-medium'>소개글</label>
                                 <textarea
-                                    id='introduction'
                                     name='introduction'
                                     rows={5}
                                     className='w-full border p-2 rounded-md'
                                 ></textarea>
                             </div>
                             <div>
-                                <label htmlFor='ownerPhoneNumber' className='block mb-1 font-medium'>
-                                    소유주 전화번호
+                                <label className='block mb-1 font-medium'>
+                                    소유주 전화번호 <span className='text-red-500'>*</span>
                                 </label>
                                 <input
                                     type='text'
-                                    id='ownerPhoneNumber'
                                     name='ownerPhoneNumber'
                                     required
                                     className='w-full border p-2 rounded-md'
@@ -525,382 +564,118 @@ export default function NewStudioPage() {
                         </div>
                     </fieldset>
 
-                    {/* ... (주소 정보, 건물 정보 Fieldset은 기존과 동일하므로 생략) ... */}
+                    {/* 주소 정보 (필수) */}
                     <fieldset className='border p-4 rounded-md'>
-                        <legend className='font-bold text-lg px-2'>주소 정보</legend>
+                        <legend className='font-bold text-lg px-2'>
+                            주소 정보 <span className='text-red-500'>*</span>
+                        </legend>
+                        {/* ... 기존 주소 입력 UI (변경 없음) ... */}
                         <div className='space-y-4 p-2'>
                             <div className='flex gap-4 items-end'>
                                 <div className='flex-1'>
-                                    <label htmlFor='zipCode' className='block mb-1 font-medium'>
-                                        우편번호
-                                    </label>
+                                    <label className='block mb-1 font-medium'>우편번호</label>
                                     <input
                                         type='text'
-                                        id='zipCode'
                                         name='addressInfo.zipCode'
                                         value={address.zipCode}
                                         readOnly
                                         required
-                                        className='w-full border p-2 rounded-md bg-gray-100 cursor-not-allowed'
-                                        placeholder='주소를 검색하세요'
+                                        className='w-full border p-2 rounded-md bg-gray-100'
                                     />
                                 </div>
                                 <button
                                     type='button'
                                     onClick={onClickAddressSearch}
-                                    className='bg-blue-600 text-white px-4 py-2 rounded-md h-[42px] hover:bg-blue-700 whitespace-nowrap'
+                                    className='bg-blue-600 text-white px-4 py-2 rounded-md'
                                 >
                                     주소 검색
                                 </button>
                             </div>
-
                             <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
-                                <div>
-                                    <label htmlFor='roadAddress' className='block mb-1 font-medium'>
-                                        도로명 주소
-                                    </label>
-                                    <input
-                                        type='text'
-                                        id='roadAddress'
-                                        name='addressInfo.roadAddress'
-                                        value={address.roadAddress}
-                                        readOnly
-                                        required
-                                        className='w-full border p-2 rounded-md bg-gray-100 cursor-not-allowed'
-                                    />
-                                </div>
-                                <div>
-                                    <label htmlFor='jibunAddress' className='block mb-1 font-medium'>
-                                        지번 주소
-                                    </label>
-                                    <input
-                                        type='text'
-                                        id='jibunAddress'
-                                        name='addressInfo.jibunAddress'
-                                        value={address.jibunAddress}
-                                        readOnly
-                                        required
-                                        className='w-full border p-2 rounded-md bg-gray-100 cursor-not-allowed'
-                                    />
-                                </div>
-                            </div>
-
-                            <div>
-                                <label htmlFor='detailedAddress' className='block mb-1 font-medium'>
-                                    상세 주소
-                                </label>
                                 <input
                                     type='text'
-                                    id='detailedAddress'
-                                    name='addressInfo.detailedAddress'
-                                    value={address.detailedAddress}
-                                    onChange={handleDetailAddressChange}
+                                    value={address.roadNameAddress}
+                                    readOnly
                                     required
-                                    className='w-full border p-2 rounded-md'
-                                    placeholder='상세 주소를 입력하세요'
+                                    className='w-full border p-2 rounded-md bg-gray-100'
+                                />
+                                <input
+                                    type='text'
+                                    value={address.lotNumberAddress}
+                                    readOnly
+                                    required
+                                    className='w-full border p-2 rounded-md bg-gray-100'
                                 />
                             </div>
+                            <input
+                                type='text'
+                                value={address.detailedAddress}
+                                onChange={handleDetailAddressChange}
+                                required
+                                className='w-full border p-2 rounded-md'
+                                placeholder='상세 주소'
+                            />
                         </div>
-                    </fieldset>
 
-                    <fieldset className='border p-4 rounded-md'>
-                        <legend className='font-bold text-lg px-2'>건물 정보</legend>
-                        <div className='space-y-4 p-2'>
-                            <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
-                                <div>
-                                    <label htmlFor='floorType' className='block mb-1 font-medium'>
-                                        층 유형
-                                    </label>
-                                    <select
-                                        id='floorType'
-                                        name='buildingInfo.floorType'
-                                        required
-                                        className='w-full border p-2 rounded-md'
-                                    >
-                                        <option value=''>선택해주세요</option>
-                                        {optionData.floorOptions.map((option) => (
-                                            <option key={option.code} value={option.code}>
-                                                {option.description}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label htmlFor='floorNumber' className='block mb-1 font-medium'>
-                                        층 수
-                                    </label>
-                                    <input
-                                        type='number'
-                                        id='floorNumber'
-                                        name='buildingInfo.floorNumber'
-                                        required
-                                        className='w-full border p-2 rounded-md'
-                                    />
-                                </div>
-                                <div>
-                                    <label htmlFor='restroomType' className='block mb-1 font-medium'>
-                                        화장실 유형
-                                    </label>
-                                    <select
-                                        id='restroomType'
-                                        name='buildingInfo.restroomType'
-                                        required
-                                        className='w-full border p-2 rounded-md'
-                                    >
-                                        <option value=''>선택해주세요</option>
-                                        {optionData.restroomOptions.map((option) => (
-                                            <option key={option.code} value={option.code}>
-                                                {option.description}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-                            </div>
-                            <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
-                                <div>
-                                    <label className='block mb-1 font-medium'>주차 가능 여부</label>
-                                    <div className='flex gap-4'>
-                                        <label>
-                                            <input
-                                                type='radio'
-                                                name='buildingInfo.isParkingAvailable'
-                                                value='true'
-                                                required
-                                            />
-                                            가능
-                                        </label>
-                                        <label>
-                                            <input
-                                                type='radio'
-                                                name='buildingInfo.isParkingAvailable'
-                                                value='false'
-                                                required
-                                            />{' '}
-                                            불가능
-                                        </label>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className='block mb-1 font-medium'>숙소 가능 여부</label>
-                                    <div className='flex gap-4'>
-                                        <label>
-                                            <input
-                                                type='radio'
-                                                name='buildingInfo.isLodgingAvailable'
-                                                value='true'
-                                                required
-                                            />{' '}
-                                            가능
-                                        </label>
-                                        <label>
-                                            <input
-                                                type='radio'
-                                                name='buildingInfo.isLodgingAvailable'
-                                                value='false'
-                                                required
-                                            />{' '}
-                                            불가능{' '}
-                                        </label>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className='block mb-1 font-medium'>화재 보험 가입 여부</label>
-                                    <div className='flex gap-4'>
-                                        <label>
-                                            <input
-                                                type='radio'
-                                                name='buildingInfo.hasFireInsurance'
-                                                value='true'
-                                                required
-                                            />{' '}
-                                            가입
-                                        </label>
-                                        <label>
-                                            <input
-                                                type='radio'
-                                                name='buildingInfo.hasFireInsurance'
-                                                value='false'
-                                                required
-                                            />{' '}
-                                            미가입
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                            <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
-                                <div>
-                                    <label htmlFor='parkingFeeType' className='block mb-1 font-medium'>
-                                        주차비 유형
-                                    </label>
-                                    <select
-                                        id='parkingFeeType'
-                                        name='buildingInfo.parkingFeeType'
-                                        required
-                                        className='w-full border p-2 rounded-md'
-                                    >
-                                        <option value=''>선택해주세요</option>
-                                        {optionData.parkingFeeOptions.map((option) => (
-                                            <option key={option.code} value={option.code}>
-                                                {option.description}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label htmlFor='parkingFeeInfo' className='block mb-1 font-medium'>
-                                        주차비 정보
-                                    </label>
-                                    <input
-                                        type='text'
-                                        id='parkingFeeInfo'
-                                        name='buildingInfo.parkingFeeInfo'
-                                        className='w-full border p-2 rounded-md'
-                                    />
-                                </div>
-                            </div>
-                            <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
-                                <div>
-                                    <label htmlFor='parkingSpots' className='block mb-1 font-medium'>
-                                        주차 가능 대수
-                                    </label>
-                                    <input
-                                        type='number'
-                                        id='parkingSpots'
-                                        name='buildingInfo.parkingSpots'
-                                        className='w-full border p-2 rounded-md'
-                                    />
-                                </div>
-                                <div className='col-span-2'>
-                                    <label htmlFor='parkingLocationName' className='block mb-1 font-medium'>
-                                        주차장 이름
-                                    </label>
-                                    <input
-                                        type='text'
-                                        id='parkingLocationName'
-                                        name='buildingInfo.parkingLocationName'
-                                        className='w-full border p-2 rounded-md'
-                                    />
-                                </div>
-                            </div>
-                            <div>
-                                <label htmlFor='parkingLocationAddress' className='block mb-1 font-medium'>
-                                    주차장 주소
-                                </label>
-                                <div className='flex gap-4'>
-                                    <input
-                                        type='text'
-                                        id='parkingLocationAddress'
-                                        name='buildingInfo.parkingLocationAddress'
-                                        value={parkingAddress}
-                                        readOnly
-                                        className='w-full border p-2 rounded-md bg-gray-100 cursor-not-allowed'
-                                        placeholder='주차장 주소를 검색하세요'
-                                    />
-                                    <button
-                                        type='button'
-                                        onClick={onClickParkingAddressSearch}
-                                        className='bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 whitespace-nowrap'
-                                    >
-                                        주소 검색
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </fieldset>
+                        <br />
 
-                    {/* [수정] 인근 지하철역 선택 섹션 */}
-                    <fieldset className='border p-4 rounded-md'>
                         <div className='flex justify-between items-center mb-4'>
                             <legend className='font-bold text-lg px-2'>
-                                인근 지하철역 선택 ({stations.length} / 3)
+                                인근 지하철역 선택 <span className='text-red-500'>*</span> ({stations.length} / 3)
                             </legend>
                             <button
                                 type='button'
                                 onClick={() => setStations([])}
                                 className='text-xs text-gray-500 underline'
                             >
-                                선택 초기화
+                                초기화
                             </button>
                         </div>
-
-                        <div className='mb-2 text-sm text-blue-600 px-2'>
-                            * 주소를 검색하면 인근 역 목록이 나옵니다. 등록할 역을 클릭하여 선택해주세요. (최대 3개)
-                        </div>
-
-                        {/* 후보 목록 리스트 */}
+                        {/* ... 후보 리스트 렌더링 부분 동일 ... */}
                         <div id='nearby-stations-list' className='space-y-2 p-2 max-h-80 overflow-y-auto'>
                             {nearbyCandidates.length === 0 && (
                                 <p className='text-gray-400 text-center py-4 bg-gray-50 rounded-md'>
-                                    주소를 검색하면 인근 지하철역이 표시됩니다.
+                                    주소를 검색하면 인근 역이 표시됩니다.
                                 </p>
                             )}
-
                             {nearbyCandidates.map((candidate) => {
-                                // 현재 역이 선택되었는지 확인
                                 const isSelected = stations.some(
                                     (s) => s.subwayStationId === String(candidate.stationId)
                                 );
                                 const selectedStation = stations.find(
                                     (s) => s.subwayStationId === String(candidate.stationId)
                                 );
-
                                 return (
                                     <div
                                         key={candidate.stationId}
                                         onClick={() => handleToggleStation(candidate)}
-                                        className={`
-                                            border rounded-md p-3 cursor-pointer transition-all flex justify-between items-center
-                                            ${
-                                                isSelected
-                                                    ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
-                                                    : 'border-gray-200 hover:bg-gray-50'
-                                            }
-                                        `}
+                                        className={`border rounded-md p-3 cursor-pointer flex justify-between items-center ${
+                                            isSelected ? 'border-blue-500 bg-blue-50' : 'hover:bg-gray-50'
+                                        }`}
                                     >
-                                        <div className='flex-1'>
-                                            <div className='flex items-center gap-2 mb-1'>
-                                                {/* 체크박스 UI (선택됨 표시) */}
-                                                <div
-                                                    className={`w-5 h-5 rounded border flex items-center justify-center ${
-                                                        isSelected
-                                                            ? 'bg-blue-600 border-blue-600'
-                                                            : 'border-gray-300 bg-white'
-                                                    }`}
-                                                >
-                                                    {isSelected && (
-                                                        <span className='text-white text-xs font-bold'>✓</span>
-                                                    )}
-                                                </div>
-
-                                                <h4 className='font-bold text-lg text-gray-800'>
-                                                    {candidate.stationName}
-                                                </h4>
-
-                                                {/* 거리 표시 */}
+                                        <div>
+                                            <div className='flex items-center gap-2'>
+                                                <span className='font-bold'>{candidate.stationName}</span>{' '}
                                                 <span className='text-sm text-gray-500'>
-                                                    (약 {candidate.distanceMeters}m)
+                                                    {candidate.distanceMeters}m
                                                 </span>
                                             </div>
-
-                                            {/* 호선 정보 표시 */}
-                                            <div className='flex gap-1 ml-7'>
-                                                {candidate.lines.map((line, lIdx) => (
+                                            <div className='flex gap-1 mt-1'>
+                                                {candidate.lines.map((l, i) => (
                                                     <span
-                                                        key={lIdx}
-                                                        className='text-[10px] text-white px-1.5 py-0.5 rounded-full'
-                                                        style={{ backgroundColor: line.lineColor || '#999' }}
+                                                        key={i}
+                                                        className='text-[10px] text-white px-1.5 rounded'
+                                                        style={{ background: l.lineColor }}
                                                     >
-                                                        {line.lineName}
+                                                        {l.lineName}
                                                     </span>
                                                 ))}
                                             </div>
                                         </div>
-
-                                        {/* 선택된 경우 순위 표시 */}
                                         {isSelected && (
-                                            <div className='text-blue-600 font-bold text-lg px-2'>
+                                            <span className='text-blue-600 font-bold'>
                                                 {selectedStation?.sequence}순위
-                                            </div>
+                                            </span>
                                         )}
                                     </div>
                                 );
@@ -908,59 +683,366 @@ export default function NewStudioPage() {
                         </div>
                     </fieldset>
 
-                    {/* ... (옵션, 금지악기 Fieldset은 기존과 동일하므로 생략) ... */}
+                    {/* 건물 정보 */}
+                    <fieldset className='border p-4 rounded-md'>
+                        <legend className='font-bold text-lg px-2'>건물 정보</legend>
+                        <div className='space-y-4 p-2'>
+                            <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
+                                <div>
+                                    <label className='block mb-1 font-medium'>
+                                        층 유형 <span className='text-red-500'>*</span>
+                                    </label>
+                                    <select
+                                        name='buildingInfo.floorType'
+                                        required
+                                        className='w-full border p-2 rounded-md'
+                                    >
+                                        <option value=''>선택</option>
+                                        {optionData.floorOptions.map((opt) => (
+                                            <option key={opt.code} value={opt.code}>
+                                                {opt.description}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className='block mb-1 font-medium'>
+                                        층 수 <span className='text-red-500'>*</span>
+                                    </label>
+                                    <input
+                                        type='number'
+                                        name='buildingInfo.floorNumber'
+                                        required
+                                        className='w-full border p-2 rounded-md'
+                                    />
+                                </div>
+                            </div>
+
+                            {/* 화장실 위치 (토글) */}
+                            <div className='bg-gray-50 p-3 rounded-md border border-gray-200'>
+                                <label className='block mb-2 font-bold text-gray-800'>
+                                    화장실 유무
+                                    {toggleOptions.hasRestroom && (
+                                        <button
+                                            type='button'
+                                            onClick={() => handleToggleOption('hasRestroom', '')}
+                                            className='ml-2 text-xs text-gray-400 underline hover:text-red-500'
+                                        >
+                                            선택 초기화
+                                        </button>
+                                    )}
+                                </label>
+                                <div className='flex gap-6 h-8 items-center mb-2'>
+                                    <label className='flex items-center gap-2 cursor-pointer'>
+                                        <input
+                                            type='radio'
+                                            name='buildingInfo.hasRestroom'
+                                            value='true'
+                                            checked={toggleOptions.hasRestroom === 'true'}
+                                            onClick={() => handleToggleOption('hasRestroom', 'true')}
+                                            onChange={() => {}}
+                                        />
+                                        있음
+                                    </label>
+                                    <label className='flex items-center gap-2 cursor-pointer'>
+                                        <input
+                                            type='radio'
+                                            name='buildingInfo.hasRestroom'
+                                            value='false'
+                                            checked={toggleOptions.hasRestroom === 'false'}
+                                            onClick={() => handleToggleOption('hasRestroom', 'false')}
+                                            onChange={() => {}}
+                                        />
+                                        없음
+                                    </label>
+                                </div>
+
+                                {/* [조건부 렌더링] 화장실이 '있음'일 때만 상세 옵션 노출 */}
+                                {toggleOptions.hasRestroom === 'true' && (
+                                    <div className='pl-4 border-l-2 border-blue-200 space-y-3 mt-3'>
+                                        {/* 1-1. 화장실 위치 */}
+                                        <div>
+                                            <label className='block mb-1 font-medium text-sm text-gray-600'>
+                                                화장실 위치 <span className='text-red-500 text-xs'>(필수)</span>
+                                                {toggleOptions.restroomLocation && (
+                                                    <button
+                                                        type='button'
+                                                        onClick={() => handleToggleOption('restroomLocation', '')}
+                                                        className='ml-2 text-xs text-gray-400 underline'
+                                                    >
+                                                        초기화
+                                                    </button>
+                                                )}
+                                            </label>
+                                            <div className='flex gap-4 items-center'>
+                                                {restroomLocationOptions.length > 0 ? (
+                                                    restroomLocationOptions.map((opt) => (
+                                                        <label
+                                                            key={opt.code}
+                                                            className='flex items-center gap-2 cursor-pointer text-sm'
+                                                        >
+                                                            <input
+                                                                type='radio'
+                                                                name='buildingInfo.restroomLocation'
+                                                                value={opt.code}
+                                                                checked={toggleOptions.restroomLocation === opt.code}
+                                                                onClick={() =>
+                                                                    handleToggleOption('restroomLocation', opt.code)
+                                                                }
+                                                                onChange={() => {}}
+                                                            />
+                                                            {opt.description}
+                                                        </label>
+                                                    ))
+                                                ) : (
+                                                    <span className='text-sm text-gray-400'>로딩 중...</span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* 1-2. 화장실 남녀 구분 */}
+                                        <div>
+                                            <label className='block mb-1 font-medium text-sm text-gray-600'>
+                                                화장실 남녀 구분 <span className='text-red-500 text-xs'>(필수)</span>
+                                                {toggleOptions.restroomGender && (
+                                                    <button
+                                                        type='button'
+                                                        onClick={() => handleToggleOption('restroomGender', '')}
+                                                        className='ml-2 text-xs text-gray-400 underline'
+                                                    >
+                                                        초기화
+                                                    </button>
+                                                )}
+                                            </label>
+                                            <div className='flex gap-4 items-center'>
+                                                {restroomGenderOptions.length > 0 ? (
+                                                    restroomGenderOptions.map((opt) => (
+                                                        <label
+                                                            key={opt.code}
+                                                            className='flex items-center gap-2 cursor-pointer text-sm'
+                                                        >
+                                                            <input
+                                                                type='radio'
+                                                                name='buildingInfo.restroomGender'
+                                                                value={opt.code}
+                                                                checked={toggleOptions.restroomGender === opt.code}
+                                                                onClick={() =>
+                                                                    handleToggleOption('restroomGender', opt.code)
+                                                                }
+                                                                onChange={() => {}}
+                                                            />
+                                                            {opt.description}
+                                                        </label>
+                                                    ))
+                                                ) : (
+                                                    <span className='text-sm text-gray-400'>로딩 중...</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* [수정] 숙소 및 화재보험 (토글 가능, 선택사항) */}
+                            <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                                <div>
+                                    <label className='block mb-1 font-medium'>
+                                        숙소 가능 여부
+                                        {toggleOptions.isLodgingAvailable && (
+                                            <button
+                                                type='button'
+                                                onClick={() => handleToggleOption('isLodgingAvailable', '')}
+                                                className='ml-2 text-xs text-gray-400 underline'
+                                            >
+                                                초기화
+                                            </button>
+                                        )}
+                                    </label>
+                                    <div className='flex gap-4 h-[42px] items-center'>
+                                        <label className='flex items-center gap-2'>
+                                            <input
+                                                type='radio'
+                                                name='buildingInfo.isLodgingAvailable'
+                                                value='true'
+                                                checked={toggleOptions.isLodgingAvailable === 'true'}
+                                                onClick={() => handleToggleOption('isLodgingAvailable', 'true')}
+                                                onChange={() => {}}
+                                            />{' '}
+                                            가능
+                                        </label>
+                                        <label className='flex items-center gap-2'>
+                                            <input
+                                                type='radio'
+                                                name='buildingInfo.isLodgingAvailable'
+                                                value='false'
+                                                checked={toggleOptions.isLodgingAvailable === 'false'}
+                                                onClick={() => handleToggleOption('isLodgingAvailable', 'false')}
+                                                onChange={() => {}}
+                                            />{' '}
+                                            불가능
+                                        </label>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className='block mb-1 font-medium'>
+                                        화재 보험 가입 여부
+                                        {toggleOptions.hasFireInsurance && (
+                                            <button
+                                                type='button'
+                                                onClick={() => handleToggleOption('hasFireInsurance', '')}
+                                                className='ml-2 text-xs text-gray-400 underline'
+                                            >
+                                                초기화
+                                            </button>
+                                        )}
+                                    </label>
+                                    <div className='flex gap-4 h-[42px] items-center'>
+                                        <label className='flex items-center gap-2'>
+                                            <input
+                                                type='radio'
+                                                name='buildingInfo.hasFireInsurance'
+                                                value='true'
+                                                checked={toggleOptions.hasFireInsurance === 'true'}
+                                                onClick={() => handleToggleOption('hasFireInsurance', 'true')}
+                                                onChange={() => {}}
+                                            />{' '}
+                                            가입
+                                        </label>
+                                        <label className='flex items-center gap-2'>
+                                            <input
+                                                type='radio'
+                                                name='buildingInfo.hasFireInsurance'
+                                                value='false'
+                                                checked={toggleOptions.hasFireInsurance === 'false'}
+                                                onClick={() => handleToggleOption('hasFireInsurance', 'false')}
+                                                onChange={() => {}}
+                                            />{' '}
+                                            미가입
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* [수정] 주차 정보 (필수 아님, 주차 가능 여부 삭제) */}
+                            <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                                <div>
+                                    <label className='block mb-1 font-medium'>주차비 유형</label>
+                                    <select name='buildingInfo.parkingFeeType' className='w-full border p-2 rounded-md'>
+                                        <option value=''>선택 (주차 불가 포함)</option>
+                                        {optionData.parkingFeeOptions.map((opt) => (
+                                            <option key={opt.code} value={opt.code}>
+                                                {opt.description}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className='block mb-1 font-medium'>주차비 정보</label>
+                                    <input
+                                        type='text'
+                                        name='buildingInfo.parkingFeeInfo'
+                                        className='w-full border p-2 rounded-md'
+                                    />
+                                </div>
+                            </div>
+                            <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
+                                <div>
+                                    <label className='block mb-1 font-medium'>주차 가능 대수</label>
+                                    <input
+                                        type='number'
+                                        name='buildingInfo.parkingSpots'
+                                        className='w-full border p-2 rounded-md'
+                                    />
+                                </div>
+                                <div className='col-span-2'>
+                                    <label className='block mb-1 font-medium'>주차장 이름</label>
+                                    <input
+                                        type='text'
+                                        name='buildingInfo.parkingLocationName'
+                                        className='w-full border p-2 rounded-md'
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <label className='block mb-1 font-medium'>주차장 주소</label>
+                                <div className='flex gap-4'>
+                                    <input
+                                        type='text'
+                                        value={parkingAddress}
+                                        readOnly
+                                        className='w-full border p-2 rounded-md bg-gray-100'
+                                        placeholder='주차장 주소 검색'
+                                    />
+                                    <button
+                                        type='button'
+                                        onClick={onClickParkingAddressSearch}
+                                        className='bg-blue-600 text-white px-4 py-2 rounded-md whitespace-nowrap'
+                                    >
+                                        검색
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    {/* 옵션 (선택) */}
+                    {/* ... (옵션, 금지악기 UI 기존과 동일 - 모두 선택 사항) ... */}
                     <fieldset className='border p-4 rounded-md'>
                         <legend className='font-bold text-lg px-2'>스튜디오 공용 옵션</legend>
                         <div className='grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 p-2'>
-                            {optionData.studioCommonOptions.map((option) => (
-                                <label key={option.code} className='flex items-center gap-2'>
-                                    <input type='checkbox' name='studioCommonOptionCodes' value={option.code} />
-                                    {option.description}
+                            {optionData.studioCommonOptions.map((opt) => (
+                                <label key={opt.code} className='flex gap-2'>
+                                    <input type='checkbox' name='studioCommonOptionCodes' value={opt.code} />
+                                    {opt.description}
                                 </label>
                             ))}
                         </div>
                     </fieldset>
                     <fieldset className='border p-4 rounded-md'>
-                        <legend className='font-bold text-lg px-2 mt-4'>스튜디오 개별 옵션</legend>
+                        <legend className='font-bold text-lg px-2'>스튜디오 개별 옵션</legend>
                         <div className='grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 p-2'>
-                            {optionData.studioIndividualOptions.map((option) => (
-                                <label key={option.code} className='flex items-center gap-2'>
-                                    <input type='checkbox' name='studioIndividualOptionCodes' value={option.code} />
-                                    {option.description}
+                            {optionData.studioIndividualOptions.map((opt) => (
+                                <label key={opt.code} className='flex gap-2'>
+                                    <input type='checkbox' name='studioIndividualOptionCodes' value={opt.code} />
+                                    {opt.description}
                                 </label>
                             ))}
                         </div>
                     </fieldset>
-
                     <fieldset className='border p-4 rounded-md'>
                         <legend className='font-bold text-lg px-2'>금지 악기</legend>
                         <div className='grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 p-2'>
-                            {optionData.unavailableInstrumentOptions.map((option) => (
-                                <label key={option.code} className='flex items-center gap-2'>
-                                    <input type='checkbox' name='unavailableInstrumentCodes' value={option.code} />
-                                    {option.description}
+                            {optionData.forbiddenInstrumentOptions.map((opt) => (
+                                <label key={opt.code} className='flex gap-2'>
+                                    <input type='checkbox' name='forbiddenInstrumentCodes' value={opt.code} />
+                                    {opt.description}
                                 </label>
                             ))}
                         </div>
                     </fieldset>
 
+                    {/* 룸 정보 (최소 1개, 이름만 필수) */}
                     <fieldset className='border p-4 rounded-md'>
-                        <legend className='font-bold text-lg px-2'>룸 정보 (최소 1개)</legend>
-                        <div id='rooms-list' className='space-y-4 p-2'>
+                        <legend className='font-bold text-lg px-2'>
+                            룸 정보 <span className='text-red-500'>*</span>
+                        </legend>
+                        <div className='space-y-4 p-2'>
                             {rooms.map((room, index) => (
                                 <div key={index} className='border-dashed p-3 rounded-md space-y-2 relative'>
                                     <h4 className='font-semibold'>룸 {index + 1}</h4>
                                     <div>
-                                        <label className='block mb-1 font-medium'>룸 이름</label>
+                                        <label className='block mb-1 font-medium'>
+                                            룸 이름 <span className='text-red-500'>*</span>
+                                        </label>
                                         <input
                                             type='text'
-                                            name={`rooms[${index}].roomName`}
-                                            required
-                                            className='w-full border p-2 rounded-md'
                                             value={room.roomName}
                                             onChange={(e) => handleRoomChange(index, 'roomName', e.target.value)}
+                                            required
+                                            className='w-full border p-2 rounded-md'
                                         />
                                     </div>
+                                    {/* 나머지 필드는 required 제거됨 */}
                                     <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
                                         <div>
                                             <label className='block mb-1 font-medium'>사용 가능 여부</label>
@@ -968,75 +1050,66 @@ export default function NewStudioPage() {
                                                 <label>
                                                     <input
                                                         type='radio'
-                                                        name={`rooms[${index}].isAvailable`}
-                                                        value='true'
-                                                        checked={room.isAvailable === true}
+                                                        checked={room.isAvailable}
                                                         onChange={() => handleRoomChange(index, 'isAvailable', true)}
-                                                    />
+                                                    />{' '}
                                                     가능
                                                 </label>
                                                 <label>
                                                     <input
                                                         type='radio'
-                                                        name={`rooms[${index}].isAvailable`}
-                                                        value='false'
-                                                        checked={room.isAvailable === false}
+                                                        checked={!room.isAvailable}
                                                         onChange={() => handleRoomChange(index, 'isAvailable', false)}
-                                                    />
+                                                    />{' '}
                                                     불가능
                                                 </label>
                                             </div>
                                         </div>
                                         <div>
-                                            <label className='block mb-1 font-medium'>입주 가능 날짜</label>
+                                            <label className='block mb-1 font-medium'>입주 가능일</label>
                                             <input
                                                 type='date'
-                                                name={`rooms[${index}].availableAt`}
-                                                className='w-full border p-2 rounded-md'
                                                 value={room.availableAt}
                                                 onChange={(e) => handleRoomChange(index, 'availableAt', e.target.value)}
+                                                className='w-full border p-2 rounded-md'
                                             />
                                         </div>
                                     </div>
-                                    <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
+                                    <div className='grid grid-cols-3 gap-4'>
                                         <div>
-                                            <label className='block mb-1 font-medium'>가로 길이 (mm)</label>
+                                            <label className='block mb-1 font-medium'>가로(mm)</label>
                                             <input
                                                 type='number'
-                                                name={`rooms[${index}].widthMm`}
-                                                className='w-full border p-2 rounded-md'
                                                 value={room.widthMm}
                                                 onChange={(e) => handleRoomChange(index, 'widthMm', e.target.value)}
+                                                className='w-full border p-2 rounded-md'
                                             />
                                         </div>
                                         <div>
-                                            <label className='block mb-1 font-medium'>세로 길이 (mm)</label>
+                                            <label className='block mb-1 font-medium'>세로(mm)</label>
                                             <input
                                                 type='number'
-                                                name={`rooms[${index}].heightMm`}
-                                                className='w-full border p-2 rounded-md'
                                                 value={room.heightMm}
                                                 onChange={(e) => handleRoomChange(index, 'heightMm', e.target.value)}
+                                                className='w-full border p-2 rounded-md'
                                             />
                                         </div>
                                         <div>
                                             <label className='block mb-1 font-medium'>기본 가격</label>
                                             <input
                                                 type='number'
-                                                name={`rooms[${index}].roomBasePrice`}
-                                                required
-                                                className='w-full border p-2 rounded-md'
                                                 value={room.roomBasePrice}
                                                 onChange={(e) =>
                                                     handleRoomChange(index, 'roomBasePrice', e.target.value)
                                                 }
+                                                className='w-full border p-2 rounded-md'
                                             />
                                         </div>
                                     </div>
                                     <button
                                         type='button'
                                         onClick={() => removeRoom(index)}
-                                        className='absolute top-2 right-2 bg-red-500 text-white px-2 py-1 rounded-full text-xs'
+                                        className='absolute top-2 right-2 bg-red-500 text-white px-2 py-1 rounded text-xs'
                                     >
                                         삭제
                                     </button>
@@ -1052,37 +1125,29 @@ export default function NewStudioPage() {
                         </button>
                     </fieldset>
 
-                    {/* ... (이미지 정보 Fieldset, Submit 버튼 기존과 동일) ... */}
+                    {/* 이미지 정보 (메인/도면 필수) */}
                     <fieldset className='border p-4 rounded-md'>
                         <legend className='font-bold text-lg px-2'>이미지 정보</legend>
                         <div className='p-2 space-y-4'>
-                            <p className='text-sm text-gray-500'>
-                                * 이미지는 등록 버튼을 누르면 일괄 업로드됩니다. 잘못 선택했다면 삭제 후 다시
-                                선택해주세요.
-                            </p>
-
-                            {/* 1. 메인 이미지 */}
                             <div>
-                                <label className='block mb-1 font-medium'>메인 이미지 (1~3개)</label>
+                                <label className='block mb-1 font-medium'>
+                                    메인 이미지 (필수) <span className='text-red-500'>*</span>
+                                </label>
                                 <input
                                     type='file'
                                     multiple
                                     accept='image/*'
-                                    className='w-full border p-2 rounded-md'
                                     onChange={(e) => handleFileSelect(e, 'mainImages')}
+                                    className='w-full border p-2 rounded-md'
                                 />
-                                {/* 선택된 파일 목록 표시 */}
-                                <div className='mt-2 space-y-1'>
-                                    {selectedFiles.mainImages.map((file, idx) => (
-                                        <div
-                                            key={idx}
-                                            className='flex items-center justify-between bg-gray-50 p-2 rounded'
-                                        >
-                                            <span className='text-sm truncate'>{file.name}</span>
+                                <div className='mt-1 space-y-1'>
+                                    {selectedFiles.mainImages.map((f, i) => (
+                                        <div key={i} className='flex justify-between bg-gray-50 p-1 text-sm'>
+                                            {f.name}{' '}
                                             <button
                                                 type='button'
-                                                onClick={() => removeSelectedFile('mainImages', idx)}
-                                                className='text-red-500 text-xs font-bold px-2'
+                                                onClick={() => removeSelectedFile('mainImages', i)}
+                                                className='text-red-500'
                                             >
                                                 X
                                             </button>
@@ -1090,28 +1155,24 @@ export default function NewStudioPage() {
                                     ))}
                                 </div>
                             </div>
-
-                            {/* 2. 건물 이미지 */}
+                            {/* 건물, 룸, 옵션 이미지는 선택사항 */}
                             <div>
-                                <label className='block mb-1 font-medium'>건물 이미지 (최대 4개)</label>
+                                <label className='block mb-1 font-medium'>건물 이미지</label>
                                 <input
                                     type='file'
                                     multiple
                                     accept='image/*'
-                                    className='w-full border p-2 rounded-md'
                                     onChange={(e) => handleFileSelect(e, 'buildingImages')}
+                                    className='w-full border p-2 rounded-md'
                                 />
-                                <div className='mt-2 space-y-1'>
-                                    {selectedFiles.buildingImages.map((file, idx) => (
-                                        <div
-                                            key={idx}
-                                            className='flex items-center justify-between bg-gray-50 p-2 rounded'
-                                        >
-                                            <span className='text-sm truncate'>{file.name}</span>
+                                <div className='mt-1 space-y-1'>
+                                    {selectedFiles.buildingImages.map((f, i) => (
+                                        <div key={i} className='flex justify-between bg-gray-50 p-1 text-sm'>
+                                            {f.name}{' '}
                                             <button
                                                 type='button'
-                                                onClick={() => removeSelectedFile('buildingImages', idx)}
-                                                className='text-red-500 text-xs font-bold px-2'
+                                                onClick={() => removeSelectedFile('buildingImages', i)}
+                                                className='text-red-500'
                                             >
                                                 X
                                             </button>
@@ -1119,28 +1180,23 @@ export default function NewStudioPage() {
                                     ))}
                                 </div>
                             </div>
-
-                            {/* 3. 룸 이미지 */}
                             <div>
-                                <label className='block mb-1 font-medium'>룸 이미지 (최대 20개)</label>
+                                <label className='block mb-1 font-medium'>룸 이미지</label>
                                 <input
                                     type='file'
                                     multiple
                                     accept='image/*'
-                                    className='w-full border p-2 rounded-md'
                                     onChange={(e) => handleFileSelect(e, 'roomImages')}
+                                    className='w-full border p-2 rounded-md'
                                 />
-                                <div className='mt-2 space-y-1'>
-                                    {selectedFiles.roomImages.map((file, idx) => (
-                                        <div
-                                            key={idx}
-                                            className='flex items-center justify-between bg-gray-50 p-2 rounded'
-                                        >
-                                            <span className='text-sm truncate'>{file.name}</span>
+                                <div className='mt-1 space-y-1'>
+                                    {selectedFiles.roomImages.map((f, i) => (
+                                        <div key={i} className='flex justify-between bg-gray-50 p-1 text-sm'>
+                                            {f.name}{' '}
                                             <button
                                                 type='button'
-                                                onClick={() => removeSelectedFile('roomImages', idx)}
-                                                className='text-red-500 text-xs font-bold px-2'
+                                                onClick={() => removeSelectedFile('roomImages', i)}
+                                                className='text-red-500'
                                             >
                                                 X
                                             </button>
@@ -1148,51 +1204,46 @@ export default function NewStudioPage() {
                                     ))}
                                 </div>
                             </div>
-
-                            {/* 4. 도면 이미지 */}
                             <div>
-                                <label className='block mb-1 font-medium'>도면 이미지 (필수 1개)</label>
+                                <label className='block mb-1 font-medium'>
+                                    도면 이미지 (필수) <span className='text-red-500'>*</span>
+                                </label>
                                 <input
                                     type='file'
                                     accept='image/*'
-                                    className='w-full border p-2 rounded-md'
                                     onChange={(e) => handleFileSelect(e, 'blueprintImage')}
+                                    className='w-full border p-2 rounded-md'
                                 />
                                 {selectedFiles.blueprintImage && (
-                                    <div className='mt-2 flex items-center justify-between bg-gray-50 p-2 rounded'>
-                                        <span className='text-sm truncate'>{selectedFiles.blueprintImage.name}</span>
+                                    <div className='mt-1 flex justify-between bg-gray-50 p-1 text-sm'>
+                                        {selectedFiles.blueprintImage.name}{' '}
                                         <button
                                             type='button'
                                             onClick={() => removeSelectedFile('blueprintImage')}
-                                            className='text-red-500 text-xs font-bold px-2'
+                                            className='text-red-500'
                                         >
                                             X
                                         </button>
                                     </div>
                                 )}
                             </div>
-
-                            {/* [추가] 공용 옵션 이미지 (선택, 최대 10개) */}
                             <div>
-                                <label className='block mb-1 font-medium'>공용 옵션 이미지 (선택, 최대 10개)</label>
+                                <label className='block mb-1 font-medium'>공용 옵션 이미지</label>
                                 <input
                                     type='file'
                                     multiple
                                     accept='image/*'
-                                    className='w-full border p-2 rounded-md'
                                     onChange={(e) => handleFileSelect(e, 'commonOptionImages')}
+                                    className='w-full border p-2 rounded-md'
                                 />
-                                <div className='mt-2 space-y-1'>
-                                    {selectedFiles.commonOptionImages.map((file, idx) => (
-                                        <div
-                                            key={idx}
-                                            className='flex items-center justify-between bg-gray-50 p-2 rounded'
-                                        >
-                                            <span className='text-sm truncate'>{file.name}</span>
+                                <div className='mt-1 space-y-1'>
+                                    {selectedFiles.commonOptionImages.map((f, i) => (
+                                        <div key={i} className='flex justify-between bg-gray-50 p-1 text-sm'>
+                                            {f.name}{' '}
                                             <button
                                                 type='button'
-                                                onClick={() => removeSelectedFile('commonOptionImages', idx)}
-                                                className='text-red-500 text-xs font-bold px-2'
+                                                onClick={() => removeSelectedFile('commonOptionImages', i)}
+                                                className='text-red-500'
                                             >
                                                 X
                                             </button>
@@ -1200,28 +1251,23 @@ export default function NewStudioPage() {
                                     ))}
                                 </div>
                             </div>
-
-                            {/* [추가] 개별 옵션 이미지 (선택, 최대 10개) */}
                             <div>
-                                <label className='block mb-1 font-medium'>개별 옵션 이미지 (선택, 최대 10개)</label>
+                                <label className='block mb-1 font-medium'>개별 옵션 이미지</label>
                                 <input
                                     type='file'
                                     multiple
                                     accept='image/*'
-                                    className='w-full border p-2 rounded-md'
                                     onChange={(e) => handleFileSelect(e, 'individualOptionImages')}
+                                    className='w-full border p-2 rounded-md'
                                 />
-                                <div className='mt-2 space-y-1'>
-                                    {selectedFiles.individualOptionImages.map((file, idx) => (
-                                        <div
-                                            key={idx}
-                                            className='flex items-center justify-between bg-gray-50 p-2 rounded'
-                                        >
-                                            <span className='text-sm truncate'>{file.name}</span>
+                                <div className='mt-1 space-y-1'>
+                                    {selectedFiles.individualOptionImages.map((f, i) => (
+                                        <div key={i} className='flex justify-between bg-gray-50 p-1 text-sm'>
+                                            {f.name}{' '}
                                             <button
                                                 type='button'
-                                                onClick={() => removeSelectedFile('individualOptionImages', idx)}
-                                                className='text-red-500 text-xs font-bold px-2'
+                                                onClick={() => removeSelectedFile('individualOptionImages', i)}
+                                                className='text-red-500'
                                             >
                                                 X
                                             </button>
@@ -1236,7 +1282,7 @@ export default function NewStudioPage() {
                         type='submit'
                         disabled={isSubmitting}
                         className={`w-full text-white p-3 rounded-md font-bold ${
-                            isSubmitting ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                            isSubmitting ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
                         }`}
                     >
                         {isSubmitting ? '스튜디오 생성 중...' : '스튜디오 생성'}
@@ -1246,7 +1292,7 @@ export default function NewStudioPage() {
             <button
                 type='button'
                 onClick={() => router.push('/')}
-                className='mt-4 text-gray-700 p-3 rounded-md font-bold border border-gray-300 hover:bg-gray-100 transition-colors'
+                className='mt-4 text-gray-700 p-3 rounded-md border hover:bg-gray-100'
             >
                 홈으로 돌아가기
             </button>

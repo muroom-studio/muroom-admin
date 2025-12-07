@@ -377,7 +377,7 @@ export default function StudioDetailPage() {
 
                             <div className='mt-8 flex gap-2'>
                                 <button
-                                    onClick={() => router.push('/admin/studios')}
+                                    onClick={() => router.push('/studios')}
                                     className='flex-1 py-3 border border-gray-300 rounded-lg text-gray-700 font-bold hover:bg-gray-50'
                                 >
                                     목록으로

@@ -952,7 +952,7 @@ export default function NewStudioPage() {
                                 <div>
                                     <label className='block mb-1 font-medium'>주차비 유형</label>
                                     <select name='buildingInfo.parkingFeeType' className='w-full border p-2 rounded-md'>
-                                        <option value=''>선택 (주차 불가 포함)</option>
+                                        <option value=''>선택</option>
                                         {optionData.parkingFeeOptions.map((opt) => (
                                             <option key={opt.code} value={opt.code}>
                                                 {opt.description}

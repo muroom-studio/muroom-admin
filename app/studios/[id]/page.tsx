@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Image from 'next/image';
 
 // --- Type Definitions (API 응답 구조) ---
 
@@ -25,7 +26,7 @@ interface OptionItem {
 interface RoomItem {
     roomId: number;
     roomName: string;
-    isAvailable: boolean;
+    isAvailable: boolean | null; // null 가능
     availableAt: string | null;
     widthMm: number | null;
     heightMm: number | null;
@@ -47,7 +48,8 @@ interface StudioDetailData {
     studioBuildingInfo: {
         floorType: { description: string; code: string };
         floorNumber: number;
-        hasRestroom: boolean;
+        // [수정] boolean -> boolean | null
+        hasRestroom: boolean | null;
         restroomLocation: { description: string; code: string } | null;
         restroomGender: { description: string; code: string } | null;
         parkingFeeType: { description: string; code: string } | null;
@@ -55,8 +57,8 @@ interface StudioDetailData {
         parkingSpots: number | null;
         parkingLocationName: string | null;
         parkingLocationAddress: string | null;
-        isLodgingAvailable: boolean;
-        hasFireInsurance: boolean;
+        isLodgingAvailable: boolean | null;
+        hasFireInsurance: boolean | null;
     };
     studioNotice: {
         ownerNickname: string;
@@ -85,9 +87,23 @@ interface StudioDetailData {
 }
 
 // --- Helper Functions ---
+
+// 가격 포맷팅 (null이면 '문의필요')
 const formatPrice = (price: number | null) => {
-    if (price === null) return '-';
+    if (price === null) return '문의필요';
     return new Intl.NumberFormat('ko-KR').format(price) + '원';
+};
+
+// [추가] 3-State 상태 렌더링 헬퍼 (True / False / Null)
+const renderStatus = (value: boolean | null, trueText: string, falseText: string) => {
+    if (value === null) {
+        return <span className='text-gray-400 font-medium'>문의필요</span>;
+    }
+    return value ? (
+        <span className='text-blue-600 font-medium'>{trueText}</span>
+    ) : (
+        <span className='text-gray-600'>{falseText}</span>
+    );
 };
 
 export default function StudioDetailPage() {
@@ -143,31 +159,45 @@ export default function StudioDetailPage() {
                         <div className='text-right'>
                             <span className='block text-sm text-gray-500'>가격대 (월)</span>
                             <span className='text-2xl font-bold text-blue-600'>
-                                {formatPrice(base.studioMinPrice)} ~ {formatPrice(base.studioMaxPrice)}
+                                {base.studioMinPrice === null && base.studioMaxPrice === null ? (
+                                    <span className='text-gray-400 text-xl'>가격 문의</span>
+                                ) : (
+                                    <>
+                                        {formatPrice(base.studioMinPrice)} ~ {formatPrice(base.studioMaxPrice)}
+                                    </>
+                                )}
                             </span>
                         </div>
                     </div>
 
-                    {/* 메인 이미지 슬라이더 (여기선 간단히 그리드로 표시) */}
+                    {/* 메인 이미지 슬라이더 */}
                     <div className='grid grid-cols-1 md:grid-cols-2 gap-2 h-80'>
-                        {studioImages.mainImageKeys[0] && (
-                            <img
+                        {studioImages.mainImageKeys[0] ? (
+                            <Image
                                 src={studioImages.mainImageKeys[0]}
                                 alt='메인1'
-                                className='w-full h-full object-cover rounded-l-lg'
+                                width={640}
+                                height={320}
+                                className='w-full h-80 object-cover rounded-lg'
                             />
+                        ) : (
+                            <div className='w-full h-full bg-gray-200 flex items-center justify-center rounded-l-lg'>
+                                이미지 없음
+                            </div>
                         )}
                         <div className='grid grid-cols-2 gap-2'>
-                            {/* 나머지 메인 이미지 혹은 건물 이미지 보여주기 */}
+                            {/* 서브 이미지 (메인 나머지 + 건물 이미지) */}
                             {studioImages.mainImageKeys
                                 .slice(1)
                                 .concat(studioImages.buildingImageKeys)
                                 .slice(0, 4)
                                 .map((src, idx) => (
-                                    <img
+                                    <Image
                                         key={idx}
                                         src={src}
                                         alt='서브'
+                                        width={320}
+                                        height={160}
                                         className='w-full h-full object-cover rounded-md'
                                     />
                                 ))}
@@ -182,7 +212,9 @@ export default function StudioDetailPage() {
                         {/* 1. 소개 */}
                         <section className='bg-white rounded-xl shadow-sm p-6'>
                             <h2 className='text-xl font-bold mb-4 border-b pb-2'>스튜디오 소개</h2>
-                            <pre className='whitespace-pre-wrap text-gray-700 font-sans'>{notice.introduction}</pre>
+                            <pre className='whitespace-pre-wrap text-gray-700 font-sans leading-relaxed'>
+                                {notice.introduction}
+                            </pre>
                         </section>
 
                         {/* 2. 옵션 정보 */}
@@ -191,32 +223,38 @@ export default function StudioDetailPage() {
 
                             <div className='mb-6'>
                                 <h3 className='font-semibold text-gray-800 mb-3'>공용 옵션</h3>
-                                <div className='grid grid-cols-2 md:grid-cols-4 gap-3'>
-                                    {studioOptions.commonOptions.map((opt) => (
-                                        <div
-                                            key={opt.code}
-                                            className='flex items-center gap-2 bg-gray-50 p-2 rounded border'
-                                        >
-                                            {/* 아이콘 이미지가 있다면 표시 (경로 확인 필요) */}
-                                            {/* <img src={opt.iconImageKey} className="w-5 h-5" /> */}
-                                            <span className='text-sm'>{opt.description}</span>
-                                        </div>
-                                    ))}
-                                </div>
+                                {studioOptions.commonOptions.length > 0 ? (
+                                    <div className='grid grid-cols-2 md:grid-cols-4 gap-3'>
+                                        {studioOptions.commonOptions.map((opt) => (
+                                            <div
+                                                key={opt.code}
+                                                className='flex items-center gap-2 bg-gray-50 p-2 rounded border'
+                                            >
+                                                <span className='text-sm'>{opt.description}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <span className='text-gray-400 text-sm'>정보 없음</span>
+                                )}
                             </div>
 
                             <div>
                                 <h3 className='font-semibold text-gray-800 mb-3'>개별 옵션</h3>
-                                <div className='grid grid-cols-2 md:grid-cols-4 gap-3'>
-                                    {studioOptions.individualOptions.map((opt) => (
-                                        <div
-                                            key={opt.code}
-                                            className='flex items-center gap-2 bg-gray-50 p-2 rounded border'
-                                        >
-                                            <span className='text-sm'>{opt.description}</span>
-                                        </div>
-                                    ))}
-                                </div>
+                                {studioOptions.individualOptions.length > 0 ? (
+                                    <div className='grid grid-cols-2 md:grid-cols-4 gap-3'>
+                                        {studioOptions.individualOptions.map((opt) => (
+                                            <div
+                                                key={opt.code}
+                                                className='flex items-center gap-2 bg-gray-50 p-2 rounded border'
+                                            >
+                                                <span className='text-sm'>{opt.description}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <span className='text-gray-400 text-sm'>정보 없음</span>
+                                )}
                             </div>
                         </section>
 
@@ -234,7 +272,12 @@ export default function StudioDetailPage() {
                                         <div>
                                             <div className='flex items-center gap-2 mb-1'>
                                                 <span className='font-bold text-lg'>{room.roomName}</span>
-                                                {room.isAvailable ? (
+                                                {/* 룸 상태 표시 */}
+                                                {room.isAvailable === null ? (
+                                                    <span className='bg-gray-100 text-gray-500 text-xs px-2 py-0.5 rounded'>
+                                                        상태 문의
+                                                    </span>
+                                                ) : room.isAvailable ? (
                                                     <span className='bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded'>
                                                         즉시 입주 가능
                                                     </span>
@@ -245,7 +288,7 @@ export default function StudioDetailPage() {
                                                 )}
                                             </div>
                                             <div className='text-sm text-gray-500'>
-                                                {room.widthMm} x {room.heightMm} mm
+                                                {room.widthMm || '?'} x {room.heightMm || '?'} mm
                                             </div>
                                         </div>
                                         <div className='text-right'>
@@ -263,88 +306,124 @@ export default function StudioDetailPage() {
                         <section className='bg-white rounded-xl shadow-sm p-6'>
                             <h2 className='text-xl font-bold mb-4 border-b pb-2'>금지 악기</h2>
                             <div className='flex gap-2 flex-wrap'>
-                                {data.studioForbiddenInstruments.instruments.map((inst, i) => (
-                                    <span
-                                        key={i}
-                                        className='bg-red-50 text-red-600 px-3 py-1 rounded-full text-sm font-medium border border-red-100'
-                                    >
-                                        🚫 {inst}
-                                    </span>
-                                ))}
+                                {data.studioForbiddenInstruments.instruments.length > 0 ? (
+                                    data.studioForbiddenInstruments.instruments.map((inst, i) => (
+                                        <span
+                                            key={i}
+                                            className='bg-red-50 text-red-600 px-3 py-1 rounded-full text-sm font-medium border border-red-100'
+                                        >
+                                            🚫 {inst}
+                                        </span>
+                                    ))
+                                ) : (
+                                    <span className='text-gray-400'>없음</span>
+                                )}
                             </div>
                         </section>
 
                         {/* 5. 도면 이미지 */}
-                        <section className='bg-white rounded-xl shadow-sm p-6'>
-                            <h2 className='text-xl font-bold mb-4 border-b pb-2'>도면</h2>
-                            <div className='bg-gray-100 rounded-lg overflow-hidden'>
-                                <img
-                                    src={studioImages.blueprintImageKey}
-                                    alt='도면'
-                                    className='w-full object-contain max-h-96'
-                                />
-                            </div>
-                        </section>
+                        {studioImages.blueprintImageKey && (
+                            <section className='bg-white rounded-xl shadow-sm p-6'>
+                                <h2 className='text-xl font-bold mb-4 border-b pb-2'>도면</h2>
+                                <div className='bg-gray-100 rounded-lg overflow-hidden'>
+                                    <Image
+                                        src={studioImages.blueprintImageKey}
+                                        alt='도면'
+                                        className='w-full object-contain max-h-96'
+                                        width={640}
+                                        height={320}
+                                    />
+                                </div>
+                            </section>
+                        )}
                     </div>
 
                     {/* 오른쪽 컬럼 (요약 정보 & 연락처) */}
                     <div className='lg:col-span-1 space-y-8'>
                         {/* 건물 정보 카드 */}
-                        <section className='bg-white rounded-xl shadow-sm p-6 sticky top-8'>
+                        <section className='bg-white rounded-xl shadow-sm p-6 sticky top-8 border border-gray-100'>
                             <h3 className='font-bold text-gray-900 mb-4 text-lg'>건물 정보</h3>
-                            <ul className='space-y-3 text-sm text-gray-700'>
-                                <li className='flex justify-between border-b pb-2'>
+                            <ul className='space-y-4 text-sm text-gray-700'>
+                                <li className='flex justify-between items-center border-b border-gray-100 pb-2'>
                                     <span className='text-gray-500'>층수</span>
-                                    <span>
+                                    <span className='font-medium'>
                                         {build.floorType.description} {build.floorNumber}층
                                     </span>
                                 </li>
-                                <li className='flex justify-between border-b pb-2'>
+
+                                <li className='flex justify-between items-center border-b border-gray-100 pb-2'>
                                     <span className='text-gray-500'>화장실</span>
-                                    <span>
-                                        {build.hasRestroom
-                                            ? `${build.restroomLocation?.description || '-'} / ${
-                                                  build.restroomGender?.description || '-'
-                                              }`
-                                            : '없음'}
-                                    </span>
-                                </li>
-                                <li className='flex justify-between border-b pb-2'>
-                                    <span className='text-gray-500'>주차</span>
+                                    {/* 화장실 로직: null -> 문의필요 / true -> 상세정보 / false -> 없음 */}
                                     <div className='text-right'>
-                                        <span className='block'>{build.parkingFeeType?.description || '-'}</span>
-                                        {build.parkingSpots && (
-                                            <span className='text-xs text-gray-400'>({build.parkingSpots}대 가능)</span>
-                                        )}
-                                        {build.parkingFeeInfo && (
-                                            <span className='block text-xs text-gray-500'>{build.parkingFeeInfo}</span>
+                                        {build.hasRestroom === null ? (
+                                            <span className='text-gray-400 font-medium'>문의필요</span>
+                                        ) : build.hasRestroom ? (
+                                            <span className='font-medium'>
+                                                {build.restroomLocation?.description || '-'} /{' '}
+                                                {build.restroomGender?.description || '-'}
+                                            </span>
+                                        ) : (
+                                            <span className='text-gray-600'>없음</span>
                                         )}
                                     </div>
                                 </li>
-                                <li className='flex justify-between border-b pb-2'>
-                                    <span className='text-gray-500'>숙소 가능</span>
-                                    <span>{build.isLodgingAvailable ? '가능' : '불가능'}</span>
+
+                                <li className='flex justify-between items-center border-b border-gray-100 pb-2'>
+                                    <span className='text-gray-500'>주차</span>
+                                    <div className='text-right'>
+                                        {/* 주차비 유형이 없으면 문의필요 */}
+                                        {build.parkingFeeType ? (
+                                            <>
+                                                <span className='block font-medium'>
+                                                    {build.parkingFeeType.description}
+                                                </span>
+                                                {build.parkingSpots !== null && (
+                                                    <span className='text-xs text-gray-400'>
+                                                        ({build.parkingSpots}대)
+                                                    </span>
+                                                )}
+                                                {build.parkingFeeInfo && (
+                                                    <span className='block text-xs text-gray-500 mt-0.5'>
+                                                        {build.parkingFeeInfo}
+                                                    </span>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <span className='text-gray-400 font-medium'>문의필요</span>
+                                        )}
+                                    </div>
                                 </li>
-                                <li className='flex justify-between pb-2'>
+
+                                <li className='flex justify-between items-center border-b border-gray-100 pb-2'>
+                                    <span className='text-gray-500'>숙소 가능</span>
+                                    {renderStatus(build.isLodgingAvailable, '가능', '불가능')}
+                                </li>
+
+                                <li className='flex justify-between items-center pb-2'>
                                     <span className='text-gray-500'>화재 보험</span>
-                                    <span>{build.hasFireInsurance ? '가입됨' : '미가입'}</span>
+                                    {renderStatus(build.hasFireInsurance, '가입됨', '미가입')}
                                 </li>
                             </ul>
 
                             <div className='mt-8'>
                                 <h3 className='font-bold text-gray-900 mb-4 text-lg'>사장님 정보</h3>
-                                <div className='bg-gray-100 p-4 rounded-lg'>
+                                <div className='bg-blue-50 p-4 rounded-lg border border-blue-100'>
                                     <div className='flex items-center gap-3 mb-2'>
+                                        <div className='w-10 h-10 bg-blue-200 rounded-full flex items-center justify-center text-blue-600 font-bold text-lg'>
+                                            {notice.ownerNickname ? notice.ownerNickname[0] : 'U'}
+                                        </div>
                                         <div>
                                             <p className='font-bold text-gray-800'>{notice.ownerNickname}</p>
                                             <p className='text-xs text-gray-500'>
-                                                {notice.isIdentityVerified ? '인증된 사용자' : '미인증 사용자'}
+                                                {notice.isIdentityVerified ? '인증된 사용자' : '미인증'}
                                             </p>
                                         </div>
                                     </div>
-                                    <div className='mt-3 pt-3 border-t border-blue-100'>
-                                        <p className='text-sm text-gray-600'>연락처</p>
-                                        <p className='font-bold text-lg'>{notice.ownerPhoneNumber}</p>
+                                    <div className='mt-3 pt-3 border-t border-blue-200'>
+                                        <p className='text-sm text-gray-600 mb-1'>연락처</p>
+                                        <p className='font-bold text-lg text-blue-700 tracking-wide'>
+                                            {notice.ownerPhoneNumber}
+                                        </p>
                                     </div>
                                 </div>
                             </div>
@@ -354,13 +433,16 @@ export default function StudioDetailPage() {
                                 <p className='text-sm text-gray-600 mb-4'>{base.lotNumberAddress}</p>
                                 <div className='space-y-2'>
                                     {base.nearbySubwayStations.map((station, idx) => (
-                                        <div key={idx} className='flex items-center gap-2 text-sm'>
+                                        <div
+                                            key={idx}
+                                            className='flex items-center gap-2 text-sm bg-gray-50 p-2 rounded'
+                                        >
                                             <span className='font-bold text-gray-800'>{station.stationName}</span>
                                             <div className='flex gap-1'>
                                                 {station.lines.map((line, lIdx) => (
                                                     <span
                                                         key={lIdx}
-                                                        className='text-[10px] text-white px-1.5 py-0.5 rounded-full'
+                                                        className='text-[10px] text-white px-1.5 py-0.5 rounded-full font-bold'
                                                         style={{ backgroundColor: line.lineColor }}
                                                     >
                                                         {line.lineName}
@@ -378,12 +460,10 @@ export default function StudioDetailPage() {
                             <div className='mt-8 flex gap-2'>
                                 <button
                                     onClick={() => router.push('/studios')}
-                                    className='flex-1 py-3 border border-gray-300 rounded-lg text-gray-700 font-bold hover:bg-gray-50'
+                                    className='flex-1 py-3 border border-gray-300 rounded-lg text-gray-700 font-bold hover:bg-gray-50 transition-colors'
                                 >
                                     목록으로
                                 </button>
-                                {/* 수정/삭제 기능이 있다면 추가 */}
-                                {/* <button className="flex-1 py-3 bg-blue-600 rounded-lg text-white font-bold hover:bg-blue-700">수정하기</button> */}
                             </div>
                         </section>
                     </div>

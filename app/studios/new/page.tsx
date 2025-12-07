@@ -58,7 +58,7 @@ interface NearbyStationsResponse {
 
 interface RoomInfo {
     roomName: string;
-    isAvailable: boolean; // 기본값 처리를 위해 유지
+    isAvailable: boolean | null;
     availableAt: string;
     widthMm: string;
     heightMm: string;
@@ -99,7 +99,7 @@ export default function NewStudioPage() {
     };
 
     const [rooms, setRooms] = useState<RoomInfo[]>([
-        { roomName: '', isAvailable: true, availableAt: '', widthMm: '', heightMm: '', roomBasePrice: '' },
+        { roomName: '', isAvailable: null, availableAt: '', widthMm: '', heightMm: '', roomBasePrice: '' },
     ]);
 
     const [address, setAddress] = useState({
@@ -223,7 +223,7 @@ export default function NewStudioPage() {
     const addRoom = () => {
         setRooms([
             ...rooms,
-            { roomName: '', isAvailable: true, availableAt: '', widthMm: '', heightMm: '', roomBasePrice: '' },
+            { roomName: '', isAvailable: null, availableAt: '', widthMm: '', heightMm: '', roomBasePrice: '' },
         ]);
     };
 
@@ -1069,21 +1069,49 @@ export default function NewStudioPage() {
                                     {/* 나머지 필드는 required 제거됨 */}
                                     <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
                                         <div>
-                                            <label className='block mb-1 font-medium'>사용 가능 여부</label>
+                                            <label className='block mb-1 font-medium'>
+                                                사용 가능 여부
+                                                {/* [추가] 선택 초기화 버튼 (선택 사항) */}
+                                                {room.isAvailable !== null && (
+                                                    <button
+                                                        type='button'
+                                                        onClick={() => handleRoomChange(index, 'isAvailable', null)}
+                                                        className='ml-2 text-xs text-gray-400 underline'
+                                                    >
+                                                        초기화
+                                                    </button>
+                                                )}
+                                            </label>
                                             <div className='flex gap-4'>
-                                                <label>
+                                                <label className='flex items-center gap-2 cursor-pointer'>
                                                     <input
                                                         type='radio'
-                                                        checked={room.isAvailable}
-                                                        onChange={() => handleRoomChange(index, 'isAvailable', true)}
+                                                        name={`rooms[${index}].isAvailable`}
+                                                        value='true'
+                                                        // [수정] true일 때만 체크
+                                                        checked={room.isAvailable === true}
+                                                        // [수정] 토글 로직: 이미 true면 null, 아니면 true
+                                                        onClick={() => {
+                                                            const nextVal = room.isAvailable === true ? null : true;
+                                                            handleRoomChange(index, 'isAvailable', nextVal);
+                                                        }}
+                                                        onChange={() => {}} // React 경고 방지
                                                     />{' '}
                                                     가능
                                                 </label>
-                                                <label>
+                                                <label className='flex items-center gap-2 cursor-pointer'>
                                                     <input
                                                         type='radio'
-                                                        checked={!room.isAvailable}
-                                                        onChange={() => handleRoomChange(index, 'isAvailable', false)}
+                                                        name={`rooms[${index}].isAvailable`}
+                                                        value='false'
+                                                        // [수정] false일 때만 체크
+                                                        checked={room.isAvailable === false}
+                                                        // [수정] 토글 로직: 이미 false면 null, 아니면 false
+                                                        onClick={() => {
+                                                            const nextVal = room.isAvailable === false ? null : false;
+                                                            handleRoomChange(index, 'isAvailable', nextVal);
+                                                        }}
+                                                        onChange={() => {}}
                                                     />{' '}
                                                     불가능
                                                 </label>

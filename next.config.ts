@@ -16,6 +16,11 @@ const nextConfig: NextConfig = {
                 hostname: 'muroom-storage.s3.ap-northeast-2.amazonaws.com',
                 pathname: '/**',
             },
+            {
+                protocol: 'https',
+                hostname: 'muroom-bach-dev-storage.s3.ap-northeast-2.amazonaws.com',
+                pathname: '/**',
+            },
         ],
     },
 };

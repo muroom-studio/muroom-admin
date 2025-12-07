@@ -123,12 +123,6 @@ export default function StudioListPage() {
                         >
                             + STUDIO
                         </Link>
-                        <Link
-                            href='/owners/new'
-                            className='bg-green-600 text-white px-5 py-2.5 rounded-md font-semibold hover:bg-green-700 transition-colors shadow-sm'
-                        >
-                            + OWNER
-                        </Link>
                     </div>
                 </div>
 

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Script from 'next/script';
 import { useRouter } from 'next/navigation';
 import OwnerRegisterModal from '@/components/OwnerRegisterModal';
+import NumberInput from '@/components/NumberInput';
 
 // --- Type Definitions ---
 
@@ -530,27 +531,15 @@ export default function NewStudioPage() {
                                 {/* 가격, 보증금 등 필수 해제 */}
                                 <div>
                                     <label className='block mb-1 font-medium'>최소 가격</label>
-                                    <input
-                                        type='number'
-                                        name='studioMinPrice'
-                                        className='w-full border p-2 rounded-md'
-                                    />
+                                    <NumberInput name='studioMinPrice' className='w-full border p-2 rounded-md' />
                                 </div>
                                 <div>
                                     <label className='block mb-1 font-medium'>최대 가격</label>
-                                    <input
-                                        type='number'
-                                        name='studioMaxPrice'
-                                        className='w-full border p-2 rounded-md'
-                                    />
+                                    <NumberInput name='studioMaxPrice' className='w-full border p-2 rounded-md' />
                                 </div>
                                 <div>
                                     <label className='block mb-1 font-medium'>보증금</label>
-                                    <input
-                                        type='number'
-                                        name='depositAmount'
-                                        className='w-full border p-2 rounded-md'
-                                    />
+                                    <NumberInput name='depositAmount' className='w-full border p-2 rounded-md' />
                                 </div>
                             </div>
                             <div>
@@ -733,8 +722,7 @@ export default function NewStudioPage() {
                                     <label className='block mb-1 font-medium'>
                                         층 수 <span className='text-red-500'>*</span>
                                     </label>
-                                    <input
-                                        type='number'
+                                    <NumberInput
                                         name='buildingInfo.floorNumber'
                                         required
                                         className='w-full border p-2 rounded-md'
@@ -972,8 +960,7 @@ export default function NewStudioPage() {
                             <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
                                 <div>
                                     <label className='block mb-1 font-medium'>주차 가능 대수</label>
-                                    <input
-                                        type='number'
+                                    <NumberInput
                                         name='buildingInfo.parkingSpots'
                                         className='w-full border p-2 rounded-md'
                                     />
@@ -1130,8 +1117,7 @@ export default function NewStudioPage() {
                                     <div className='grid grid-cols-3 gap-4'>
                                         <div>
                                             <label className='block mb-1 font-medium'>가로(mm)</label>
-                                            <input
-                                                type='number'
+                                            <NumberInput
                                                 value={room.widthMm}
                                                 onChange={(e) => handleRoomChange(index, 'widthMm', e.target.value)}
                                                 className='w-full border p-2 rounded-md'
@@ -1139,8 +1125,7 @@ export default function NewStudioPage() {
                                         </div>
                                         <div>
                                             <label className='block mb-1 font-medium'>세로(mm)</label>
-                                            <input
-                                                type='number'
+                                            <NumberInput
                                                 value={room.heightMm}
                                                 onChange={(e) => handleRoomChange(index, 'heightMm', e.target.value)}
                                                 className='w-full border p-2 rounded-md'
@@ -1148,8 +1133,7 @@ export default function NewStudioPage() {
                                         </div>
                                         <div>
                                             <label className='block mb-1 font-medium'>기본 가격</label>
-                                            <input
-                                                type='number'
+                                            <NumberInput
                                                 value={room.roomBasePrice}
                                                 onChange={(e) =>
                                                     handleRoomChange(index, 'roomBasePrice', e.target.value)

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Script from 'next/script';
 import { useRouter } from 'next/navigation';
+import OwnerRegisterModal from '@/components/OwnerRegisterModal';
 
 // --- Type Definitions ---
 
@@ -86,6 +87,16 @@ interface PresignedUrlResponse {
 export default function NewStudioPage() {
     const router = useRouter();
     const [stations, setStations] = useState<Station[]>([]);
+    const [isOwnerModalOpen, setIsOwnerModalOpen] = useState(false);
+    const handleOwnerRegisterSuccess = (newPhoneNumber: string) => {
+        // 기존 폼 데이터(FormData)를 직접 수정하긴 어려우니,
+        // 전화번호를 State로 관리하거나, DOM에 직접 값을 넣어야 합니다.
+        // 여기서는 가장 쉬운 방법: name="ownerPhoneNumber" 인 input을 찾아서 값 변경
+        const phoneInput = document.querySelector('input[name="ownerPhoneNumber"]') as HTMLInputElement;
+        if (phoneInput) {
+            phoneInput.value = newPhoneNumber;
+        }
+    };
 
     const [rooms, setRooms] = useState<RoomInfo[]>([
         { roomName: '', isAvailable: true, availableAt: '', widthMm: '', heightMm: '', roomBasePrice: '' },
@@ -554,12 +565,25 @@ export default function NewStudioPage() {
                                 <label className='block mb-1 font-medium'>
                                     소유주 전화번호 <span className='text-red-500'>*</span>
                                 </label>
-                                <input
-                                    type='text'
-                                    name='ownerPhoneNumber'
-                                    required
-                                    className='w-full border p-2 rounded-md'
-                                />
+                                <div className='flex gap-2'>
+                                    <input
+                                        type='text'
+                                        name='ownerPhoneNumber'
+                                        required
+                                        className='flex-1 border p-2 rounded-md'
+                                        placeholder='등록된 사장님 전화번호 입력'
+                                    />
+                                    <button
+                                        type='button'
+                                        onClick={() => setIsOwnerModalOpen(true)}
+                                        className='bg-green-600 text-white px-4 py-2 rounded-md text-sm hover:bg-green-700 whitespace-nowrap'
+                                    >
+                                        + 신규 사장님 등록
+                                    </button>
+                                </div>
+                                <p className='text-xs text-gray-500 mt-1'>
+                                    * 이미 등록된 사장님이면 전화번호를 입력하고, 없으면 신규 등록 버튼을 눌러주세요.
+                                </p>
                             </div>
                         </div>
                     </fieldset>
@@ -1289,6 +1313,13 @@ export default function NewStudioPage() {
                     </button>
                 </form>
             </main>
+
+            <OwnerRegisterModal
+                isOpen={isOwnerModalOpen}
+                onClose={() => setIsOwnerModalOpen(false)}
+                onSuccess={handleOwnerRegisterSuccess}
+            />
+
             <button
                 type='button'
                 onClick={() => router.push('/')}

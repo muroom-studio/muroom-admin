@@ -98,7 +98,7 @@ export default function TermsDetailPage() {
                 {/* 하단 버튼 (수정 기능이 필요하면 여기에 추가) */}
                 <div className='mt-8 flex justify-end gap-3'>
                     <button
-                        onClick={() => router.push('/admin/terms')}
+                        onClick={() => router.push('/terms')}
                         className='px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium transition-colors'
                     >
                         목록

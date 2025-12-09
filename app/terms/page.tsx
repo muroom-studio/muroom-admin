@@ -87,7 +87,7 @@ export default function TermsListPage() {
                         <p className='text-sm text-gray-500 mt-1'>등록된 뮤지션용 약관 리스트입니다.</p>
                     </div>
                     <Link
-                        href='/admin/terms/new'
+                        href='/terms/new'
                         className='bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 font-medium transition-colors'
                     >
                         + 약관 등록

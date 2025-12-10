@@ -1,50 +1,44 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useMemo } from 'react';
-import 'react-quill-new/dist/quill.snow.css'; // 스타일 시트 임포트
+import 'suneditor/dist/css/suneditor.min.css'; // SunEditor 스타일
 
 // SSR 방지를 위한 dynamic import
-const ReactQuill = dynamic(() => import('react-quill-new'), {
+const SunEditor = dynamic(() => import('suneditor-react'), {
     ssr: false,
     loading: () => <div className='h-96 bg-gray-50 animate-pulse rounded-lg border'>Loading Editor...</div>,
 });
 
 interface TextEditorProps {
-    value: string;
-    onChange: (value: string) => void;
+    value: string; // 초기값
+    onChange: (content: string) => void; // 변경 핸들러
     placeholder?: string;
 }
 
 export default function TextEditor({ value, onChange, placeholder }: TextEditorProps) {
-    // 툴바 설정 (약관 작성에 필요한 기능 위주)
-    const modules = useMemo(
-        () => ({
-            toolbar: {
-                container: [
-                    [{ header: [1, 2, 3, false] }], // 제목 크기
-                    ['bold', 'underline'], // 굵게, 밑줄
-                    [{ list: 'ordered' }, { list: 'bullet' }], // 번호 리스트, 점 리스트
-                    [{ indent: '-1' }, { indent: '+1' }], // 들여쓰기 (약관 조항 작성 시 필수)
-                    [{ align: [] }], // 정렬
-                    ['clean'], // 서식 지우기
-                ],
-            },
-        }),
-        []
-    );
-
     return (
         <div className='h-[500px]'>
-            {' '}
-            {/* 에디터 높이 고정 */}
-            <ReactQuill
-                theme='snow'
-                value={value}
-                onChange={onChange}
-                modules={modules}
-                className='h-full bg-white'
-                placeholder={placeholder}
+            <SunEditor
+                setContents={value} // 초기값 설정
+                onChange={onChange} // 내용 변경 시 부모에게 전달
+                setOptions={{
+                    height: '100%', // 높이 100% (부모 div인 h-[500px]을 따라감)
+                    placeholder: placeholder,
+                    buttonList: [
+                        ['undo', 'redo'],
+                        ['font', 'fontSize', 'formatBlock'],
+                        ['bold', 'underline', 'italic', 'strike', 'subscript', 'superscript'],
+                        ['fontColor', 'hiliteColor'],
+                        ['removeFormat'],
+                        ['outdent', 'indent'],
+                        ['align', 'horizontalRule', 'list', 'lineHeight'],
+                        ['table', 'link', 'image'], // [핵심] 여기에 'table'이 있어서 표 생성이 가능합니다!
+                        ['fullScreen', 'showBlocks', 'codeView'],
+                        ['preview', 'print'],
+                    ],
+                    // 폰트 설정 (선택 사항)
+                    font: ['Pretendard', 'Arial', 'Tohoma', 'Courier New,Courier'],
+                }}
             />
         </div>
     );

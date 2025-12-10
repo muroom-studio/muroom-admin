@@ -2,12 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-
-// [중요] 에디터에서 작성한 스타일(들여쓰기, 리스트 등)을 그대로 유지하기 위해 CSS 임포트
-import 'react-quill-new/dist/quill.snow.css';
+import 'suneditor/dist/css/suneditor.min.css';
 
 // --- Type Definitions ---
-
 interface TermContentDto {
     termId: number;
     content: string; // HTML String
@@ -86,19 +83,19 @@ export default function TermsDetailPage() {
                 </div>
 
                 {/* 본문 내용 (HTML 렌더링) */}
-                <div className='bg-white border border-gray-200 rounded-lg min-h-[500px] p-2'>
-                    {/* [핵심] ql-snow 테마 클래스와 ql-editor 클래스를 감싸주어야 
-                        Quill 에디터에서 작성한 들여쓰기, 폰트 크기 등이 정상적으로 보입니다.
-                    */}
-                    <div className='ql-snow'>
-                        <div className='ql-editor' dangerouslySetInnerHTML={{ __html: term.content }} />
-                    </div>
+                <div className='bg-white border border-gray-200 rounded-lg min-h-[500px] p-6 mb-8'>
+                    {/* sun-editor-editable 클래스 사용 */}
+                    <div
+                        className='sun-editor-editable'
+                        dangerouslySetInnerHTML={{ __html: term.content }}
+                        style={{ fontFamily: 'inherit' }} // 폰트 상속
+                    />
                 </div>
 
                 {/* 하단 버튼 (수정 기능이 필요하면 여기에 추가) */}
                 <div className='mt-8 flex justify-end gap-3'>
                     <button
-                        onClick={() => router.push('/terms')}
+                        onClick={() => router.push('/terms/musician/signup')}
                         className='px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium transition-colors'
                     >
                         목록

@@ -61,7 +61,7 @@ export default function TermsCreatePage() {
                 throw new Error(errorText);
             }
             alert('약관이 등록되었습니다.');
-            router.push('/terms');
+            router.push('/terms/musician/signup');
         } catch (error) {
             console.error(error);
             alert('등록 실패: ' + (error instanceof Error ? error.message : '알 수 없는 오류'));
@@ -194,11 +194,11 @@ export default function TermsCreatePage() {
                                 </div>
 
                                 {/* [수정] ql-snow(테마)와 ql-editor(본문스타일) 클래스를 적용해야 들여쓰기가 먹힙니다. */}
-                                <div className='flex-1 bg-white overflow-y-auto ql-snow'>
+                                <div className='flex-1 bg-white overflow-y-auto p-4'>
                                     <div
-                                        className='ql-editor' // 이 클래스가 핵심입니다.
+                                        className='sun-editor-editable' // 이 클래스가 있어야 표 테두리 등이 보임
                                         dangerouslySetInnerHTML={{ __html: content }}
-                                        style={{ border: 'none' }} // 에디터 테두리 제거
+                                        style={{ border: 'none', padding: 0 }}
                                     />
                                 </div>
                             </div>

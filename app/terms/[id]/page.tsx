@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import 'suneditor/dist/css/suneditor.min.css';
+import 'suneditor/dist/css/suneditor.min.css'; // SunEditor 스타일
 
 // --- Type Definitions ---
 interface TermContentDto {
     termId: number;
+    title: string; // [추가] 제목 필드
     content: string; // HTML String
 }
 
@@ -68,17 +69,18 @@ export default function TermsDetailPage() {
     return (
         <div className='min-h-screen bg-gray-50 p-8 flex flex-col items-center'>
             <main className='w-full max-w-5xl bg-white rounded-xl shadow-sm border border-gray-100 p-8'>
-                {/* 헤더 */}
-                <div className='flex justify-between items-center mb-6 border-b pb-4'>
-                    <div>
-                        <h1 className='text-2xl font-bold text-gray-800'>약관 상세 내용</h1>
-                        <p className='text-sm text-gray-500 mt-1'>ID: {term.termId}</p>
+                {/* 헤더 (제목 표시) */}
+                <div className='flex justify-between items-start mb-6 border-b pb-4'>
+                    <div className='flex-1 pr-4'>
+                        {/* [수정] 제목 표시 */}
+                        <h1 className='text-2xl font-bold text-gray-900 mb-1'>{term.title}</h1>
+                        <p className='text-sm text-gray-500'>ID: {term.termId}</p>
                     </div>
                     <button
                         onClick={() => router.back()}
-                        className='bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium transition-colors'
+                        className='bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 text-sm font-medium transition-colors whitespace-nowrap'
                     >
-                        목록으로 돌아가기
+                        뒤로가기
                     </button>
                 </div>
 
@@ -88,17 +90,17 @@ export default function TermsDetailPage() {
                     <div
                         className='sun-editor-editable'
                         dangerouslySetInnerHTML={{ __html: term.content }}
-                        style={{ fontFamily: 'inherit' }} // 폰트 상속
+                        style={{ fontFamily: 'inherit', border: 'none', padding: 0 }}
                     />
                 </div>
 
-                {/* 하단 버튼 (수정 기능이 필요하면 여기에 추가) */}
+                {/* 하단 버튼 */}
                 <div className='mt-8 flex justify-end gap-3'>
                     <button
                         onClick={() => router.push('/terms/musician/signup')}
                         className='px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium transition-colors'
                     >
-                        목록
+                        목록으로
                     </button>
                     {/* <button className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors">수정하기</button> */}
                 </div>

@@ -1,28 +1,30 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import 'suneditor/dist/css/suneditor.min.css'; // SunEditor 스타일
+import 'suneditor/dist/css/suneditor.min.css';
 
-// SSR 방지를 위한 dynamic import
+// SSR 방지
 const SunEditor = dynamic(() => import('suneditor-react'), {
     ssr: false,
-    loading: () => <div className='h-96 bg-gray-50 animate-pulse rounded-lg border'>Loading Editor...</div>,
+    loading: () => <div className='h-96 bg-gray-50 animate-pulse rounded-lg border'>Loading...</div>,
 });
 
 interface TextEditorProps {
-    value: string; // 초기값
-    onChange: (content: string) => void; // 변경 핸들러
+    value: string;
+    onChange: (content: string) => void;
     placeholder?: string;
+    height?: string; // [추가] 높이를 외부에서 조절할 수 있도록 prop 추가
 }
 
-export default function TextEditor({ value, onChange, placeholder }: TextEditorProps) {
+export default function TextEditor({ value, onChange, placeholder, height = '500px' }: TextEditorProps) {
     return (
-        <div className='h-[500px]'>
+        // [수정] 부모 div의 h-[500px] 제거 -> SunEditor가 알아서 높이 잡음
+        <div>
             <SunEditor
-                setContents={value} // 초기값 설정
-                onChange={onChange} // 내용 변경 시 부모에게 전달
+                setContents={value}
+                onChange={onChange}
                 setOptions={{
-                    height: '100%', // 높이 100% (부모 div인 h-[500px]을 따라감)
+                    height: height, // [핵심] 여기에 고정 픽셀(예: '500px')이 들어가야 내부 스크롤이 생깁니다.
                     placeholder: placeholder,
                     buttonList: [
                         ['undo', 'redo'],
@@ -32,12 +34,13 @@ export default function TextEditor({ value, onChange, placeholder }: TextEditorP
                         ['removeFormat'],
                         ['outdent', 'indent'],
                         ['align', 'horizontalRule', 'list', 'lineHeight'],
-                        ['table', 'link', 'image'], // [핵심] 여기에 'table'이 있어서 표 생성이 가능합니다!
+                        ['table', 'link', 'image'],
                         ['fullScreen', 'showBlocks', 'codeView'],
                         ['preview', 'print'],
                     ],
-                    // 폰트 설정 (선택 사항)
                     font: ['Pretendard', 'Arial', 'Tohoma', 'Courier New,Courier'],
+                    // [추가 옵션] 혹시 모를 상황 대비 (크기 조절 바)
+                    resizingBar: false,
                 }}
             />
         </div>

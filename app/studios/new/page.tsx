@@ -332,7 +332,6 @@ export default function NewStudioPage() {
 
     const handleRoomChange = (index: number, field: keyof RoomInfo, value: string | boolean | null) => {
         const updatedRooms = [...rooms];
-        // @ts-expect-error: dynamic key assignment
         updatedRooms[index] = { ...updatedRooms[index], [field]: value };
         setRooms(updatedRooms);
     };

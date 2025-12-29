@@ -37,7 +37,7 @@ interface Station {
     subwayStationId: string;
     sequence: string;
     stationName?: string;
-    distanceMeters?: number;
+    distanceInMeters?: number;
     lines?: { lineName: string; lineColor: string }[];
 }
 
@@ -50,7 +50,7 @@ interface StationInfo {
     stationId: number;
     stationName: string;
     lines: StudioSubwayLineInfo[];
-    distanceMeters: number;
+    distanceInMeters: number;
 }
 
 interface NearbyStationsResponse {
@@ -376,7 +376,7 @@ export default function NewStudioPage() {
                     subwayStationId: stationIdStr,
                     sequence: String(prev.length + 1),
                     stationName: info.stationName,
-                    distanceMeters: info.distanceMeters,
+                    distanceInMeters: info.distanceInMeters,
                     lines: info.lines,
                 },
             ]);
@@ -711,7 +711,7 @@ export default function NewStudioPage() {
                                                 <div className='flex items-center gap-2'>
                                                     <span className='font-bold'>{candidate.stationName}</span>{' '}
                                                     <span className='text-sm text-gray-500'>
-                                                        {candidate.distanceMeters}m
+                                                        {candidate.distanceInMeters}m
                                                     </span>
                                                 </div>
                                                 <div className='flex gap-1 mt-1'>

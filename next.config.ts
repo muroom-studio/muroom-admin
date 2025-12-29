@@ -13,6 +13,46 @@ const nextConfig: NextConfig = {
         remotePatterns: [
             {
                 protocol: 'https',
+                hostname: 'muroom-dev-private-storage.s3.ap-northeast-2.amazonaws.com',
+                pathname: '/**',
+            },
+            {
+                protocol: 'https',
+                hostname: 'muroom-dev-public-storage.s3.ap-northeast-2.amazonaws.com',
+                pathname: '/**',
+            },
+            {
+                protocol: 'https',
+                hostname: 'muroom-prod-private-storage.s3.ap-northeast-2.amazonaws.com',
+                pathname: '/**',
+            },
+            {
+                protocol: 'https',
+                hostname: 'muroom-prod-public-storage.s3.ap-northeast-2.amazonaws.com',
+                pathname: '/**',
+            },
+            {
+                protocol: 'https',
+                hostname: 'mr-dev-private-storage.s3.ap-northeast-2.amazonaws.com',
+                pathname: '/**',
+            },
+            {
+                protocol: 'https',
+                hostname: 'mr-dev-public-storage.s3.ap-northeast-2.amazonaws.com',
+                pathname: '/**',
+            },
+            {
+                protocol: 'https',
+                hostname: 'mr-prod-private-storage.s3.ap-northeast-2.amazonaws.com',
+                pathname: '/**',
+            },
+            {
+                protocol: 'https',
+                hostname: 'mr-prod-public-storage.s3.ap-northeast-2.amazonaws.com',
+                pathname: '/**',
+            },
+            {
+                protocol: 'https',
                 hostname: 'muroom-storage.s3.ap-northeast-2.amazonaws.com',
                 pathname: '/**',
             },

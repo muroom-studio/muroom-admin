@@ -66,33 +66,36 @@ interface RoomInfo {
     roomBasePrice: string;
 }
 
+// 백엔드 Enum과 일치
 type StudioImageCategory = 'MAIN' | 'BUILDING' | 'ROOM' | 'BLUEPRINT' | 'COMMON_OPTION' | 'INDIVIDUAL_OPTION';
 
-interface StudioImageInfo {
-    fileName: string;
-    category: StudioImageCategory;
-    contentType: string;
-}
-
-interface StudioImagePresignedUrlRequest {
-    studioImages: StudioImageInfo[];
+// [추가] 업로드된 이미지 상태 관리를 위한 인터페이스
+interface UploadedImage {
+    id: string; // 고유 식별자 (삭제 시 사용)
+    file: File; // 원본 파일 객체 (미리보기 및 이름 표시용)
+    s3Key: string | null; // 업로드 성공 시 저장될 S3 Key
+    isUploading: boolean; // 로딩 상태 표시용
 }
 
 interface PresignedUrlResponse {
-    url: string;
-    fileKey: string;
+    status: number;
+    message: string;
+    data: {
+        presignedPutUrl: string;
+        fileKey: string;
+    };
 }
 
 // --- Main Component ---
 
 export default function NewStudioPage() {
     const router = useRouter();
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
+
     const [stations, setStations] = useState<Station[]>([]);
     const [isOwnerModalOpen, setIsOwnerModalOpen] = useState(false);
+
     const handleOwnerRegisterSuccess = (newPhoneNumber: string) => {
-        // 기존 폼 데이터(FormData)를 직접 수정하긴 어려우니,
-        // 전화번호를 State로 관리하거나, DOM에 직접 값을 넣어야 합니다.
-        // 여기서는 가장 쉬운 방법: name="ownerPhoneNumber" 인 input을 찾아서 값 변경
         const phoneInput = document.querySelector('input[name="ownerPhoneNumber"]') as HTMLInputElement;
         if (phoneInput) {
             phoneInput.value = newPhoneNumber;
@@ -112,13 +115,12 @@ export default function NewStudioPage() {
 
     const [parkingAddress, setParkingAddress] = useState('');
 
-    // [수정] 토글 가능한 옵션들의 상태 통합 관리 (화장실, 숙소, 화재보험)
     const [toggleOptions, setToggleOptions] = useState<{
         hasRestroom: string | null;
         restroomLocation: string | null;
         restroomGender: string | null;
-        isLodgingAvailable: string | null; // 'true' | 'false' | null
-        hasFireInsurance: string | null; // 'true' | 'false' | null
+        isLodgingAvailable: string | null;
+        hasFireInsurance: string | null;
     }>({
         hasRestroom: null,
         restroomLocation: null,
@@ -129,9 +131,7 @@ export default function NewStudioPage() {
 
     const handleToggleOption = (key: keyof typeof toggleOptions, value: string) => {
         setToggleOptions((prev) => {
-            const nextValue = prev[key] === value ? null : value; // 토글 로직
-
-            // [로직 추가] 화장실 유무가 '있음(true)'이 아닌 상태로 변하면 -> 하위 상세 정보 초기화
+            const nextValue = prev[key] === value ? null : value;
             if (key === 'hasRestroom' && nextValue !== 'true') {
                 return {
                     ...prev,
@@ -140,7 +140,6 @@ export default function NewStudioPage() {
                     restroomGender: null,
                 };
             }
-
             return {
                 ...prev,
                 [key]: nextValue,
@@ -148,13 +147,14 @@ export default function NewStudioPage() {
         });
     };
 
-    const [selectedFiles, setSelectedFiles] = useState({
-        mainImages: [] as File[],
-        buildingImages: [] as File[],
-        roomImages: [] as File[],
-        blueprintImage: null as File | null,
-        commonOptionImages: [] as File[],
-        individualOptionImages: [] as File[],
+    // [수정] 파일 상태 관리 (기존 File[] -> UploadedImage[])
+    const [imageState, setImageState] = useState({
+        mainImages: [] as UploadedImage[],
+        buildingImages: [] as UploadedImage[],
+        roomImages: [] as UploadedImage[],
+        blueprintImage: null as UploadedImage | null, // 단일 파일
+        commonOptionImages: [] as UploadedImage[],
+        individualOptionImages: [] as UploadedImage[],
     });
 
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -174,9 +174,8 @@ export default function NewStudioPage() {
     useEffect(() => {
         const fetchOptions = async () => {
             try {
-                const response = await fetch(`/api/v1/studios/filter-options`);
+                const response = await fetch(`${API_BASE_URL}/api/v1/studios/filter-options`);
                 const responseBody = await response.json();
-
                 if (response.ok && responseBody.data) {
                     setOptionData(responseBody.data);
                 }
@@ -185,37 +184,134 @@ export default function NewStudioPage() {
             }
         };
         fetchOptions();
-    }, []);
+    }, [API_BASE_URL]);
 
-    // API 옵션 분류
     const restroomLocationOptions = optionData.restroomOptions.filter((opt) =>
         ['INTERNAL', 'EXTERNAL'].includes(opt.code)
     );
     const restroomGenderOptions = optionData.restroomOptions.filter((opt) => ['SEPARATE', 'UNISEX'].includes(opt.code));
 
-    // --- Handlers: File ---
-    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, category: keyof typeof selectedFiles) => {
+    // --- [핵심] 1. 단일 파일 업로드 함수 (Presigned URL -> S3 PUT) ---
+    const uploadFileToS3 = async (file: File, category: StudioImageCategory): Promise<string> => {
+        // 1. Presigned URL 요청
+        const presignPayload = {
+            fileName: file.name,
+            category: category,
+            contentType: file.type,
+        };
+
+        const presignRes = await fetch(`${API_BASE_URL}/api/admin/studios/presigned-url`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(presignPayload),
+        });
+
+        if (!presignRes.ok) {
+            const errorText = await presignRes.text();
+            throw new Error(`URL 발급 실패: ${errorText}`);
+        }
+
+        const responseBody: PresignedUrlResponse = await presignRes.json();
+        const { presignedPutUrl, fileKey } = responseBody.data;
+
+        // 2. S3 직접 업로드 (PUT)
+        const s3Res = await fetch(presignedPutUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': file.type },
+            body: file,
+        });
+
+        if (!s3Res.ok) {
+            throw new Error('S3 업로드 실패');
+        }
+
+        return fileKey;
+    };
+
+    // --- [핵심] 2. 파일 선택 핸들러 (즉시 업로드 수행) ---
+    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, category: keyof typeof imageState) => {
         const files = e.target.files;
         if (!files || files.length === 0) return;
         const fileList = Array.from(files);
 
-        setSelectedFiles((prev) => {
-            if (category === 'blueprintImage') {
-                return { ...prev, [category]: fileList[0] };
+        // State에 '업로드 중(isUploading: true)' 상태로 먼저 추가
+        const newImages: UploadedImage[] = fileList.map((file) => ({
+            id: Math.random().toString(36).substr(2, 9),
+            file,
+            s3Key: null,
+            isUploading: true,
+        }));
+
+        // 단일 파일인 경우 교체, 다중 파일인 경우 기존 목록에 추가
+        if (category === 'blueprintImage') {
+            setImageState((prev) => ({ ...prev, [category]: newImages[0] }));
+        } else {
+            setImageState((prev) => ({
+                ...prev,
+                [category]: [...(prev[category] as UploadedImage[]), ...newImages],
+            }));
+        }
+
+        // 실제 업로드 수행 (병렬 처리)
+        for (const imgWrapper of newImages) {
+            try {
+                // API 호출 시 백엔드 Enum에 맞는 대문자 카테고리 전달
+                const apiCategory =
+                    category === 'mainImages'
+                        ? 'MAIN'
+                        : category === 'buildingImages'
+                        ? 'BUILDING'
+                        : category === 'roomImages'
+                        ? 'ROOM'
+                        : category === 'blueprintImage'
+                        ? 'BLUEPRINT'
+                        : category === 'commonOptionImages'
+                        ? 'COMMON_OPTION'
+                        : 'INDIVIDUAL_OPTION';
+
+                const key = await uploadFileToS3(imgWrapper.file, apiCategory);
+
+                // 업로드 성공 시 State 업데이트 (Key 저장, 로딩 해제)
+                setImageState((prev) => {
+                    if (category === 'blueprintImage') {
+                        // 단일 파일 업데이트
+                        const current = prev[category] as UploadedImage;
+                        if (current?.id === imgWrapper.id) {
+                            return { ...prev, [category]: { ...current, s3Key: key, isUploading: false } };
+                        }
+                        return prev;
+                    } else {
+                        // 배열 내 해당 아이템 업데이트
+                        const list = prev[category] as UploadedImage[];
+                        return {
+                            ...prev,
+                            [category]: list.map((item) =>
+                                item.id === imgWrapper.id ? { ...item, s3Key: key, isUploading: false } : item
+                            ),
+                        };
+                    }
+                });
+            } catch (error) {
+                console.error(`파일 업로드 실패 (${imgWrapper.file.name}):`, error);
+                alert(`"${imgWrapper.file.name}" 업로드에 실패했습니다.`);
+
+                // 실패 시 목록에서 제거
+                removeSelectedFile(category, imgWrapper.id);
             }
-            return { ...prev, [category]: [...(prev[category] as File[]), ...fileList] };
-        });
-        e.target.value = '';
+        }
+
+        e.target.value = ''; // Input 초기화 (동일 파일 재선택 가능하게)
     };
 
-    const removeSelectedFile = (category: keyof typeof selectedFiles, indexToRemove?: number) => {
-        setSelectedFiles((prev) => {
+    // [수정] 파일 삭제 핸들러 (ID 기준 삭제)
+    const removeSelectedFile = (category: keyof typeof imageState, idToRemove: string) => {
+        setImageState((prev) => {
             if (category === 'blueprintImage') {
                 return { ...prev, [category]: null };
             }
             return {
                 ...prev,
-                [category]: (prev[category] as File[]).filter((_, i) => i !== indexToRemove),
+                [category]: (prev[category] as UploadedImage[]).filter((item) => item.id !== idToRemove),
             };
         });
     };
@@ -234,8 +330,9 @@ export default function NewStudioPage() {
         setRooms(newRooms);
     };
 
-    const handleRoomChange = (index: number, field: keyof RoomInfo, value: string | boolean) => {
+    const handleRoomChange = (index: number, field: keyof RoomInfo, value: string | boolean | null) => {
         const updatedRooms = [...rooms];
+        // @ts-expect-error: dynamic key assignment
         updatedRooms[index] = { ...updatedRooms[index], [field]: value };
         setRooms(updatedRooms);
     };
@@ -244,7 +341,7 @@ export default function NewStudioPage() {
     const fetchNearbyStations = async (queryAddress: string) => {
         try {
             const encodedAddr = encodeURIComponent(queryAddress);
-            const res = await fetch(`/api/v1/subway/nearby?address=${encodedAddr}`);
+            const res = await fetch(`${API_BASE_URL}/api/v1/subway/nearby?address=${encodedAddr}`);
             if (!res.ok) return;
 
             const responseBody = await res.json();
@@ -294,8 +391,7 @@ export default function NewStudioPage() {
             oncomplete: function (data: DaumPostcodeData) {
                 setAddress((prev) => ({
                     ...prev,
-                    zipCode: data.zonecode || '', // 혹시 모를 안전장치
-                    // [수정] 값이 없으면 빈 문자열로 설정하여 에러 방지
+                    zipCode: data.zonecode || '',
                     roadNameAddress: data.roadAddress || '',
                     lotNumberAddress: data.jibunAddress || '',
                 }));
@@ -314,7 +410,6 @@ export default function NewStudioPage() {
         // @ts-expect-error: window.daum is loaded via script tag
         new window.daum.Postcode({
             oncomplete: function (data: DaumPostcodeData) {
-                // [수정] 값이 없으면 빈 문자열 할당
                 const fullAddress = data.roadAddress || data.jibunAddress || '';
                 setParkingAddress(fullAddress);
             },
@@ -325,18 +420,15 @@ export default function NewStudioPage() {
         setAddress({ ...address, detailedAddress: e.target.value });
     };
 
-    // --- Handlers: Submit ---
+    // --- Handlers: Submit (최종 등록) ---
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
         // 1. 필수값 유효성 검사
-        if (selectedFiles.mainImages.length === 0) return alert('메인 이미지는 최소 1개 이상 필요합니다.');
-        if (!selectedFiles.blueprintImage) return alert('도면 이미지는 필수입니다.');
-
-        // [추가] 지하철역 최소 1개 필수
+        if (imageState.mainImages.length === 0) return alert('메인 이미지는 최소 1개 이상 필요합니다.');
+        if (!imageState.blueprintImage) return alert('도면 이미지는 필수입니다.');
         if (stations.length === 0) return alert('인근 지하철역을 최소 1개 이상 선택해야 합니다.');
 
-        // [추가] 룸 이름 필수 체크 (나머지 값은 선택)
         for (let i = 0; i < rooms.length; i++) {
             if (!rooms[i].roomName.trim()) {
                 return alert(`${i + 1}번 룸의 이름을 입력해주세요.`);
@@ -349,87 +441,47 @@ export default function NewStudioPage() {
             }
         }
 
+        // [추가] 업로드 미완료 또는 실패 파일 체크
+        const allImages = [
+            ...imageState.mainImages,
+            ...imageState.buildingImages,
+            ...imageState.roomImages,
+            ...(imageState.blueprintImage ? [imageState.blueprintImage] : []),
+            ...imageState.commonOptionImages,
+            ...imageState.individualOptionImages,
+        ];
+
+        if (allImages.some((img) => img.isUploading)) {
+            return alert('아직 업로드 중인 이미지가 있습니다. 잠시 후 다시 시도해주세요.');
+        }
+
+        if (allImages.some((img) => !img.s3Key)) {
+            return alert('업로드에 실패한 이미지가 있습니다. 해당 이미지를 삭제 후 다시 선택해주세요.');
+        }
+
         if (!confirm('스튜디오를 생성하시겠습니까?')) return;
 
         setIsSubmitting(true);
 
         try {
-            // 2. 파일 평탄화
-            const allFiles: { file: File; category: StudioImageCategory }[] = [];
-            selectedFiles.mainImages.forEach((f) => allFiles.push({ file: f, category: 'MAIN' }));
-            selectedFiles.buildingImages.forEach((f) => allFiles.push({ file: f, category: 'BUILDING' }));
-            selectedFiles.roomImages.forEach((f) => allFiles.push({ file: f, category: 'ROOM' }));
-            if (selectedFiles.blueprintImage) {
-                allFiles.push({ file: selectedFiles.blueprintImage, category: 'BLUEPRINT' });
-            }
-            selectedFiles.commonOptionImages.forEach((f) => allFiles.push({ file: f, category: 'COMMON_OPTION' }));
-            selectedFiles.individualOptionImages.forEach((f) =>
-                allFiles.push({ file: f, category: 'INDIVIDUAL_OPTION' })
-            );
-
-            // 3. Presigned URL 요청
-            const presignReqBody: StudioImagePresignedUrlRequest = {
-                studioImages: allFiles.map((item) => ({
-                    fileName: item.file.name,
-                    category: item.category,
-                    contentType: item.file.type,
-                })),
-            };
-
-            const presignRes = await fetch(`/api/admin/studios/presigned-url`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(presignReqBody),
-            });
-
-            if (!presignRes.ok) {
-                const errorMsg = await presignRes.text();
-                throw new Error(`이미지 업로드 URL 발급 실패: ${errorMsg}`);
-            }
-
-            const response = await presignRes.json();
-            const presignedDataList = response.data?.presignedUrls as PresignedUrlResponse[];
-
-            // 4. S3 업로드
-            const uploadPromises = allFiles.map((item, index) => {
-                const data = presignedDataList[index];
-                if (!data || !data.url) throw new Error(`${index}번 파일 URL 없음`);
-                return fetch(data.url, {
-                    method: 'PUT',
-                    body: item.file,
-                    headers: { 'Content-Type': item.file.type },
-                });
-            });
-
-            await Promise.all(uploadPromises);
-
-            // 5. 키 분류
+            // 2. 이미 확보된 S3 Key들 수집
             const finalImageKeys = {
-                mainImageKeys: [] as string[],
-                buildingImageKeys: [] as string[],
-                roomImageKeys: [] as string[],
-                blueprintImageKey: '',
-                commonOptionImageKeys: [] as string[],
-                individualOptionImageKeys: [] as string[],
+                mainImageKeys: imageState.mainImages.map((img) => img.s3Key!),
+                buildingImageKeys: imageState.buildingImages.map((img) => img.s3Key!),
+                roomImageKeys: imageState.roomImages.map((img) => img.s3Key!),
+                blueprintImageKey: imageState.blueprintImage!.s3Key!,
+                commonOptionImageKeys: imageState.commonOptionImages.map((img) => img.s3Key!),
+                individualOptionImageKeys: imageState.individualOptionImages.map((img) => img.s3Key!),
             };
 
-            presignedDataList.forEach((data, index) => {
-                const category = allFiles[index].category;
-                const key = data.fileKey;
-                if (category === 'MAIN') finalImageKeys.mainImageKeys.push(key);
-                else if (category === 'BUILDING') finalImageKeys.buildingImageKeys.push(key);
-                else if (category === 'ROOM') finalImageKeys.roomImageKeys.push(key);
-                else if (category === 'BLUEPRINT') finalImageKeys.blueprintImageKey = key;
-                else if (category === 'COMMON_OPTION') finalImageKeys.commonOptionImageKeys.push(key);
-                else if (category === 'INDIVIDUAL_OPTION') finalImageKeys.individualOptionImageKeys.push(key);
-            });
-
-            // 6. 데이터 구성
+            // 3. 폼 데이터 구성 (이미지는 키로 대체되었으므로 JSON Payload 구성)
             const formData = new FormData(e.target as HTMLFormElement);
 
             const commonOptionCodes = formData.getAll('studioCommonOptionCodes').map(String);
             const individualOptionCodes = formData.getAll('studioIndividualOptionCodes').map(String);
             const optionCodes = [...commonOptionCodes, ...individualOptionCodes];
+            const forbiddenInstrumentCodes = formData.getAll('forbiddenInstrumentCodes').map(String);
+
             const studioCreatePayload = {
                 studioName: formData.get('studioName'),
                 studioMinPrice: Number(formData.get('studioMinPrice')) || null,
@@ -444,7 +496,6 @@ export default function NewStudioPage() {
                     floorType: formData.get('buildingInfo.floorType'),
                     floorNumber: Number(formData.get('buildingInfo.floorNumber')),
 
-                    // 토글 옵션은 State에서 직접 가져오기 (폼 데이터보다 확실함)
                     hasRestroom: toggleOptions.hasRestroom ? toggleOptions.hasRestroom === 'true' : null,
                     restroomLocation: toggleOptions.restroomLocation || null,
                     restroomGender: toggleOptions.restroomGender || null,
@@ -454,7 +505,6 @@ export default function NewStudioPage() {
                         : null,
                     hasFireInsurance: toggleOptions.hasFireInsurance ? toggleOptions.hasFireInsurance === 'true' : null,
 
-                    // [수정] 주차 관련 필드는 선택 사항이므로 값 없으면 null/빈문자열 전송
                     parkingFeeType: formData.get('buildingInfo.parkingFeeType') || null,
                     parkingFeeInfo: formData.get('buildingInfo.parkingFeeInfo') || null,
                     parkingSpots: formData.get('buildingInfo.parkingSpots')
@@ -465,25 +515,21 @@ export default function NewStudioPage() {
                 },
 
                 nearbyStations: stations,
-
-                // 옵션은 선택 안 하면 빈 배열로 전송됨
                 optionCodes: optionCodes,
-                forbiddenInstrumentCodes: formData.getAll('forbiddenInstrumentCodes'),
+                forbiddenInstrumentCodes: forbiddenInstrumentCodes,
 
-                // [수정] 룸 정보: 빈 숫자 필드는 null 처리
                 rooms: rooms.map((room) => ({
                     ...room,
                     widthMm: room.widthMm ? Number(room.widthMm) : null,
                     heightMm: room.heightMm ? Number(room.heightMm) : null,
                     roomBasePrice: room.roomBasePrice ? Number(room.roomBasePrice) : null,
-                    // 날짜 등은 빈 문자열 그대로 전송 (백엔드 처리 필요 시 수정)
                 })),
 
-                imageKeys: finalImageKeys,
+                imageKeys: finalImageKeys, // [핵심] 수집한 키 전송
             };
 
-            // 7. 생성 요청
-            const createRes = await fetch(`/api/admin/studios`, {
+            // 4. 생성 요청 (JSON 전송)
+            const createRes = await fetch(`${API_BASE_URL}/api/admin/studios`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(studioCreatePayload),
@@ -528,7 +574,6 @@ export default function NewStudioPage() {
                                 />
                             </div>
                             <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
-                                {/* 가격, 보증금 등 필수 해제 */}
                                 <div>
                                     <label className='block mb-1 font-medium'>최소 가격</label>
                                     <NumberInput name='studioMinPrice' className='w-full border p-2 rounded-md' />
@@ -582,7 +627,6 @@ export default function NewStudioPage() {
                         <legend className='font-bold text-lg px-2'>
                             주소 정보 <span className='text-red-500'>*</span>
                         </legend>
-                        {/* ... 기존 주소 입력 UI (변경 없음) ... */}
                         <div className='space-y-4 p-2'>
                             <div className='flex gap-4 items-end'>
                                 <div className='flex-1'>
@@ -628,71 +672,70 @@ export default function NewStudioPage() {
                                 className='w-full border p-2 rounded-md'
                                 placeholder='상세 주소'
                             />
-                        </div>
 
-                        <br />
+                            <br />
 
-                        <div className='flex justify-between items-center mb-4'>
-                            <legend className='font-bold text-lg px-2'>
-                                인근 지하철역 선택 <span className='text-red-500'>*</span> ({stations.length} / 3)
-                            </legend>
-                            <button
-                                type='button'
-                                onClick={() => setStations([])}
-                                className='text-xs text-gray-500 underline'
-                            >
-                                초기화
-                            </button>
-                        </div>
-                        {/* ... 후보 리스트 렌더링 부분 동일 ... */}
-                        <div id='nearby-stations-list' className='space-y-2 p-2 max-h-80 overflow-y-auto'>
-                            {nearbyCandidates.length === 0 && (
-                                <p className='text-gray-400 text-center py-4 bg-gray-50 rounded-md'>
-                                    주소를 검색하면 인근 역이 표시됩니다.
-                                </p>
-                            )}
-                            {nearbyCandidates.map((candidate) => {
-                                const isSelected = stations.some(
-                                    (s) => s.subwayStationId === String(candidate.stationId)
-                                );
-                                const selectedStation = stations.find(
-                                    (s) => s.subwayStationId === String(candidate.stationId)
-                                );
-                                return (
-                                    <div
-                                        key={candidate.stationId}
-                                        onClick={() => handleToggleStation(candidate)}
-                                        className={`border rounded-md p-3 cursor-pointer flex justify-between items-center ${
-                                            isSelected ? 'border-blue-500 bg-blue-50' : 'hover:bg-gray-50'
-                                        }`}
-                                    >
-                                        <div>
-                                            <div className='flex items-center gap-2'>
-                                                <span className='font-bold'>{candidate.stationName}</span>{' '}
-                                                <span className='text-sm text-gray-500'>
-                                                    {candidate.distanceMeters}m
-                                                </span>
-                                            </div>
-                                            <div className='flex gap-1 mt-1'>
-                                                {candidate.lines.map((l, i) => (
-                                                    <span
-                                                        key={i}
-                                                        className='text-[10px] text-white px-1.5 rounded'
-                                                        style={{ background: l.lineColor }}
-                                                    >
-                                                        {l.lineName}
+                            <div className='flex justify-between items-center mb-4'>
+                                <legend className='font-bold text-lg px-2'>
+                                    인근 지하철역 선택 <span className='text-red-500'>*</span> ({stations.length} / 3)
+                                </legend>
+                                <button
+                                    type='button'
+                                    onClick={() => setStations([])}
+                                    className='text-xs text-gray-500 underline'
+                                >
+                                    초기화
+                                </button>
+                            </div>
+                            <div id='nearby-stations-list' className='space-y-2 p-2 max-h-80 overflow-y-auto'>
+                                {nearbyCandidates.length === 0 && (
+                                    <p className='text-gray-400 text-center py-4 bg-gray-50 rounded-md'>
+                                        주소를 검색하면 인근 역이 표시됩니다.
+                                    </p>
+                                )}
+                                {nearbyCandidates.map((candidate) => {
+                                    const isSelected = stations.some(
+                                        (s) => s.subwayStationId === String(candidate.stationId)
+                                    );
+                                    const selectedStation = stations.find(
+                                        (s) => s.subwayStationId === String(candidate.stationId)
+                                    );
+                                    return (
+                                        <div
+                                            key={candidate.stationId}
+                                            onClick={() => handleToggleStation(candidate)}
+                                            className={`border rounded-md p-3 cursor-pointer flex justify-between items-center ${
+                                                isSelected ? 'border-blue-500 bg-blue-50' : 'hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            <div>
+                                                <div className='flex items-center gap-2'>
+                                                    <span className='font-bold'>{candidate.stationName}</span>{' '}
+                                                    <span className='text-sm text-gray-500'>
+                                                        {candidate.distanceMeters}m
                                                     </span>
-                                                ))}
+                                                </div>
+                                                <div className='flex gap-1 mt-1'>
+                                                    {candidate.lines.map((l, i) => (
+                                                        <span
+                                                            key={i}
+                                                            className='text-[10px] text-white px-1.5 rounded'
+                                                            style={{ background: l.lineColor }}
+                                                        >
+                                                            {l.lineName}
+                                                        </span>
+                                                    ))}
+                                                </div>
                                             </div>
+                                            {isSelected && (
+                                                <span className='text-blue-600 font-bold'>
+                                                    {selectedStation?.sequence}순위
+                                                </span>
+                                            )}
                                         </div>
-                                        {isSelected && (
-                                            <span className='text-blue-600 font-bold'>
-                                                {selectedStation?.sequence}순위
-                                            </span>
-                                        )}
-                                    </div>
-                                );
-                            })}
+                                    );
+                                })}
+                            </div>
                         </div>
                     </fieldset>
 
@@ -769,10 +812,8 @@ export default function NewStudioPage() {
                                     </label>
                                 </div>
 
-                                {/* [조건부 렌더링] 화장실이 '있음'일 때만 상세 옵션 노출 */}
                                 {toggleOptions.hasRestroom === 'true' && (
                                     <div className='pl-4 border-l-2 border-blue-200 space-y-3 mt-3'>
-                                        {/* 1-1. 화장실 위치 */}
                                         <div>
                                             <label className='block mb-1 font-medium text-sm text-gray-600'>
                                                 화장실 위치 <span className='text-red-500 text-xs'>(필수)</span>
@@ -812,7 +853,6 @@ export default function NewStudioPage() {
                                             </div>
                                         </div>
 
-                                        {/* 1-2. 화장실 남녀 구분 */}
                                         <div>
                                             <label className='block mb-1 font-medium text-sm text-gray-600'>
                                                 화장실 남녀 구분 <span className='text-red-500 text-xs'>(필수)</span>
@@ -855,7 +895,6 @@ export default function NewStudioPage() {
                                 )}
                             </div>
 
-                            {/* [수정] 숙소 및 화재보험 (토글 가능, 선택사항) */}
                             <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
                                 <div>
                                     <label className='block mb-1 font-medium'>
@@ -935,7 +974,6 @@ export default function NewStudioPage() {
                                 </div>
                             </div>
 
-                            {/* [수정] 주차 정보 (필수 아님, 주차 가능 여부 삭제) */}
                             <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
                                 <div>
                                     <label className='block mb-1 font-medium'>주차비 유형</label>
@@ -997,7 +1035,6 @@ export default function NewStudioPage() {
                     </fieldset>
 
                     {/* 옵션 (선택) */}
-                    {/* ... (옵션, 금지악기 UI 기존과 동일 - 모두 선택 사항) ... */}
                     <fieldset className='border p-4 rounded-md'>
                         <legend className='font-bold text-lg px-2'>스튜디오 공용 옵션</legend>
                         <div className='grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 p-2'>
@@ -1053,12 +1090,10 @@ export default function NewStudioPage() {
                                             className='w-full border p-2 rounded-md'
                                         />
                                     </div>
-                                    {/* 나머지 필드는 required 제거됨 */}
                                     <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
                                         <div>
                                             <label className='block mb-1 font-medium'>
                                                 사용 가능 여부
-                                                {/* [추가] 선택 초기화 버튼 (선택 사항) */}
                                                 {room.isAvailable !== null && (
                                                     <button
                                                         type='button'
@@ -1075,14 +1110,12 @@ export default function NewStudioPage() {
                                                         type='radio'
                                                         name={`rooms[${index}].isAvailable`}
                                                         value='true'
-                                                        // [수정] true일 때만 체크
                                                         checked={room.isAvailable === true}
-                                                        // [수정] 토글 로직: 이미 true면 null, 아니면 true
                                                         onClick={() => {
                                                             const nextVal = room.isAvailable === true ? null : true;
                                                             handleRoomChange(index, 'isAvailable', nextVal);
                                                         }}
-                                                        onChange={() => {}} // React 경고 방지
+                                                        onChange={() => {}}
                                                     />{' '}
                                                     가능
                                                 </label>
@@ -1091,9 +1124,7 @@ export default function NewStudioPage() {
                                                         type='radio'
                                                         name={`rooms[${index}].isAvailable`}
                                                         value='false'
-                                                        // [수정] false일 때만 체크
                                                         checked={room.isAvailable === false}
-                                                        // [수정] 토글 로직: 이미 false면 null, 아니면 false
                                                         onClick={() => {
                                                             const nextVal = room.isAvailable === false ? null : false;
                                                             handleRoomChange(index, 'isAvailable', nextVal);
@@ -1161,10 +1192,11 @@ export default function NewStudioPage() {
                         </button>
                     </fieldset>
 
-                    {/* 이미지 정보 (메인/도면 필수) */}
+                    {/* [수정] 이미지 정보 섹션 (즉시 업로드 로직 적용) */}
                     <fieldset className='border p-4 rounded-md'>
                         <legend className='font-bold text-lg px-2'>이미지 정보</legend>
                         <div className='p-2 space-y-4'>
+                            {/* 메인 이미지 */}
                             <div>
                                 <label className='block mb-1 font-medium'>
                                     메인 이미지 (필수) <span className='text-red-500'>*</span>
@@ -1177,13 +1209,18 @@ export default function NewStudioPage() {
                                     className='w-full border p-2 rounded-md'
                                 />
                                 <div className='mt-1 space-y-1'>
-                                    {selectedFiles.mainImages.map((f, i) => (
-                                        <div key={i} className='flex justify-between bg-gray-50 p-1 text-sm'>
-                                            {f.name}{' '}
+                                    {imageState.mainImages.map((img) => (
+                                        <div
+                                            key={img.id}
+                                            className='flex justify-between bg-gray-50 p-1 text-sm items-center'
+                                        >
+                                            <span className={img.isUploading ? 'text-gray-400' : 'text-black'}>
+                                                {img.file.name} {img.isUploading && '(업로드 중...)'}
+                                            </span>
                                             <button
                                                 type='button'
-                                                onClick={() => removeSelectedFile('mainImages', i)}
-                                                className='text-red-500'
+                                                onClick={() => removeSelectedFile('mainImages', img.id)}
+                                                className='text-red-500 px-2'
                                             >
                                                 X
                                             </button>
@@ -1191,7 +1228,8 @@ export default function NewStudioPage() {
                                     ))}
                                 </div>
                             </div>
-                            {/* 건물, 룸, 옵션 이미지는 선택사항 */}
+
+                            {/* 건물 이미지 */}
                             <div>
                                 <label className='block mb-1 font-medium'>건물 이미지</label>
                                 <input
@@ -1202,13 +1240,18 @@ export default function NewStudioPage() {
                                     className='w-full border p-2 rounded-md'
                                 />
                                 <div className='mt-1 space-y-1'>
-                                    {selectedFiles.buildingImages.map((f, i) => (
-                                        <div key={i} className='flex justify-between bg-gray-50 p-1 text-sm'>
-                                            {f.name}{' '}
+                                    {imageState.buildingImages.map((img) => (
+                                        <div
+                                            key={img.id}
+                                            className='flex justify-between bg-gray-50 p-1 text-sm items-center'
+                                        >
+                                            <span className={img.isUploading ? 'text-gray-400' : 'text-black'}>
+                                                {img.file.name} {img.isUploading && '(업로드 중...)'}
+                                            </span>
                                             <button
                                                 type='button'
-                                                onClick={() => removeSelectedFile('buildingImages', i)}
-                                                className='text-red-500'
+                                                onClick={() => removeSelectedFile('buildingImages', img.id)}
+                                                className='text-red-500 px-2'
                                             >
                                                 X
                                             </button>
@@ -1216,6 +1259,8 @@ export default function NewStudioPage() {
                                     ))}
                                 </div>
                             </div>
+
+                            {/* 룸 이미지 */}
                             <div>
                                 <label className='block mb-1 font-medium'>룸 이미지</label>
                                 <input
@@ -1226,13 +1271,18 @@ export default function NewStudioPage() {
                                     className='w-full border p-2 rounded-md'
                                 />
                                 <div className='mt-1 space-y-1'>
-                                    {selectedFiles.roomImages.map((f, i) => (
-                                        <div key={i} className='flex justify-between bg-gray-50 p-1 text-sm'>
-                                            {f.name}{' '}
+                                    {imageState.roomImages.map((img) => (
+                                        <div
+                                            key={img.id}
+                                            className='flex justify-between bg-gray-50 p-1 text-sm items-center'
+                                        >
+                                            <span className={img.isUploading ? 'text-gray-400' : 'text-black'}>
+                                                {img.file.name} {img.isUploading && '(업로드 중...)'}
+                                            </span>
                                             <button
                                                 type='button'
-                                                onClick={() => removeSelectedFile('roomImages', i)}
-                                                className='text-red-500'
+                                                onClick={() => removeSelectedFile('roomImages', img.id)}
+                                                className='text-red-500 px-2'
                                             >
                                                 X
                                             </button>
@@ -1240,6 +1290,8 @@ export default function NewStudioPage() {
                                     ))}
                                 </div>
                             </div>
+
+                            {/* 도면 이미지 */}
                             <div>
                                 <label className='block mb-1 font-medium'>
                                     도면 이미지 (필수) <span className='text-red-500'>*</span>
@@ -1250,19 +1302,30 @@ export default function NewStudioPage() {
                                     onChange={(e) => handleFileSelect(e, 'blueprintImage')}
                                     className='w-full border p-2 rounded-md'
                                 />
-                                {selectedFiles.blueprintImage && (
-                                    <div className='mt-1 flex justify-between bg-gray-50 p-1 text-sm'>
-                                        {selectedFiles.blueprintImage.name}{' '}
+                                {imageState.blueprintImage && (
+                                    <div className='mt-1 flex justify-between bg-gray-50 p-1 text-sm items-center'>
+                                        <span
+                                            className={
+                                                imageState.blueprintImage.isUploading ? 'text-gray-400' : 'text-black'
+                                            }
+                                        >
+                                            {imageState.blueprintImage.file.name}{' '}
+                                            {imageState.blueprintImage.isUploading && '(업로드 중...)'}
+                                        </span>
                                         <button
                                             type='button'
-                                            onClick={() => removeSelectedFile('blueprintImage')}
-                                            className='text-red-500'
+                                            onClick={() =>
+                                                removeSelectedFile('blueprintImage', imageState.blueprintImage!.id)
+                                            }
+                                            className='text-red-500 px-2'
                                         >
                                             X
                                         </button>
                                     </div>
                                 )}
                             </div>
+
+                            {/* 공용 옵션 이미지 */}
                             <div>
                                 <label className='block mb-1 font-medium'>공용 옵션 이미지</label>
                                 <input
@@ -1273,13 +1336,18 @@ export default function NewStudioPage() {
                                     className='w-full border p-2 rounded-md'
                                 />
                                 <div className='mt-1 space-y-1'>
-                                    {selectedFiles.commonOptionImages.map((f, i) => (
-                                        <div key={i} className='flex justify-between bg-gray-50 p-1 text-sm'>
-                                            {f.name}{' '}
+                                    {imageState.commonOptionImages.map((img) => (
+                                        <div
+                                            key={img.id}
+                                            className='flex justify-between bg-gray-50 p-1 text-sm items-center'
+                                        >
+                                            <span className={img.isUploading ? 'text-gray-400' : 'text-black'}>
+                                                {img.file.name} {img.isUploading && '(업로드 중...)'}
+                                            </span>
                                             <button
                                                 type='button'
-                                                onClick={() => removeSelectedFile('commonOptionImages', i)}
-                                                className='text-red-500'
+                                                onClick={() => removeSelectedFile('commonOptionImages', img.id)}
+                                                className='text-red-500 px-2'
                                             >
                                                 X
                                             </button>
@@ -1287,6 +1355,8 @@ export default function NewStudioPage() {
                                     ))}
                                 </div>
                             </div>
+
+                            {/* 개별 옵션 이미지 */}
                             <div>
                                 <label className='block mb-1 font-medium'>개별 옵션 이미지</label>
                                 <input
@@ -1297,13 +1367,18 @@ export default function NewStudioPage() {
                                     className='w-full border p-2 rounded-md'
                                 />
                                 <div className='mt-1 space-y-1'>
-                                    {selectedFiles.individualOptionImages.map((f, i) => (
-                                        <div key={i} className='flex justify-between bg-gray-50 p-1 text-sm'>
-                                            {f.name}{' '}
+                                    {imageState.individualOptionImages.map((img) => (
+                                        <div
+                                            key={img.id}
+                                            className='flex justify-between bg-gray-50 p-1 text-sm items-center'
+                                        >
+                                            <span className={img.isUploading ? 'text-gray-400' : 'text-black'}>
+                                                {img.file.name} {img.isUploading && '(업로드 중...)'}
+                                            </span>
                                             <button
                                                 type='button'
-                                                onClick={() => removeSelectedFile('individualOptionImages', i)}
-                                                className='text-red-500'
+                                                onClick={() => removeSelectedFile('individualOptionImages', img.id)}
+                                                className='text-red-500 px-2'
                                             >
                                                 X
                                             </button>
